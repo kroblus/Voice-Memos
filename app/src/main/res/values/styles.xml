@@ -2,9 +2,7 @@
 <resources>
     <style name="Theme.Shengli" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#215C5A</item>
     </style>
 </resources>
-
