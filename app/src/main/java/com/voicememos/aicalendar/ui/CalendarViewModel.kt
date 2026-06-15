@@ -172,12 +172,18 @@ class CalendarViewModel(
     }
 
     fun markDone(eventId: String) {
+        _uiState.value.events.firstOrNull { it.id == eventId }?.let { event ->
+            reminderScheduler.cancel(event.id, event.reminderMinutes)
+        }
         viewModelScope.launch {
             calendarRepository.updateStatus(eventId, EventStatus.DONE)
         }
     }
 
     fun deleteEvent(eventId: String) {
+        _uiState.value.events.firstOrNull { it.id == eventId }?.let { event ->
+            reminderScheduler.cancel(event.id, event.reminderMinutes)
+        }
         viewModelScope.launch {
             calendarRepository.delete(eventId)
         }
@@ -207,4 +213,3 @@ class CalendarViewModel(
         }
     }
 }
-
