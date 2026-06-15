@@ -1,5 +1,6 @@
 package com.voicememos.aicalendar.ai
 
+import com.voicememos.aicalendar.BuildConfig
 import com.voicememos.aicalendar.domain.AiParseResult
 import java.io.IOException
 import java.time.Clock
@@ -34,6 +35,15 @@ class DeepSeekCalendarParser(
         defaultReminderMinutes: Int = 10,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): AiParseResult = withContext(Dispatchers.IO) {
+        if (BuildConfig.DEBUG && apiKey.trim() == MOCK_API_KEY) {
+            return@withContext mockParseResult(
+                transcript = transcript,
+                zoneId = zoneId,
+                defaultDurationMinutes = defaultDurationMinutes,
+                defaultReminderMinutes = defaultReminderMinutes,
+            )
+        }
+
         val requestBody = ChatCompletionRequest(
             messages = listOf(
                 ChatMessage(role = "system", content = DeepSeekPrompt.systemPrompt()),
@@ -96,7 +106,50 @@ class DeepSeekCalendarParser(
         )
     }
 
+    private fun mockParseResult(
+        transcript: String,
+        zoneId: ZoneId,
+        defaultDurationMinutes: Int,
+        defaultReminderMinutes: Int,
+    ): AiParseResult {
+        val baseDate = clock.instant().atZone(zoneId).toLocalDate().plusDays(1)
+        val response = AiCalendarResponse(
+            events = listOf(
+                AiCalendarEvent(
+                    title = "给张三打电话",
+                    notes = "由 mock DeepSeek 回应生成",
+                    startLocal = "${baseDate}T09:00:00",
+                    endLocal = "${baseDate}T09:30:00",
+                    allDay = false,
+                    reminderMinutes = listOf(defaultReminderMinutes),
+                    confidence = 0.95,
+                    missingFields = emptyList(),
+                ),
+                AiCalendarEvent(
+                    title = "项目会",
+                    notes = "由 mock DeepSeek 回应生成",
+                    startLocal = "${baseDate}T15:00:00",
+                    endLocal = "${baseDate}T15:30:00",
+                    allDay = false,
+                    reminderMinutes = listOf(defaultReminderMinutes),
+                    confidence = 0.93,
+                    missingFields = emptyList(),
+                ),
+            ),
+            warnings = listOf("使用本地 mock DeepSeek 回应。"),
+        )
+
+        return AiResponseMapper.map(
+            response = response,
+            transcript = transcript,
+            zoneId = zoneId,
+            defaultDurationMinutes = defaultDurationMinutes,
+            defaultReminderMinutes = defaultReminderMinutes,
+        )
+    }
+
     private companion object {
+        const val MOCK_API_KEY = "mock-deepseek"
         const val DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
@@ -131,4 +184,3 @@ private data class ChatCompletionResponse(
 private data class ChatChoice(
     val message: ChatMessage,
 )
-

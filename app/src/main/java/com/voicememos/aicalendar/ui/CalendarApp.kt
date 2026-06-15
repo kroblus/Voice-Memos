@@ -62,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -203,7 +204,10 @@ private fun Header(
             IconButton(onClick = onToday) {
                 Icon(Icons.Rounded.Today, contentDescription = "今天")
             }
-            IconButton(onClick = onSettings) {
+            IconButton(
+                onClick = onSettings,
+                modifier = Modifier.testTag("settings-button"),
+            ) {
                 Box {
                     Icon(Icons.Rounded.Settings, contentDescription = "设置")
                     if (!apiKeySaved) {
@@ -516,11 +520,16 @@ private fun ComposerPanel(
             OutlinedTextField(
                 value = state.partialTranscript.ifBlank { state.textInput },
                 onValueChange = onTextChanged,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("transcript-field"),
                 label = { Text(if (state.isListening) "正在听" else "说一句或直接输入") },
                 minLines = 2,
                 trailingIcon = {
-                    FilledIconButton(onClick = onSubmit) {
+                    FilledIconButton(
+                        onClick = onSubmit,
+                        modifier = Modifier.testTag("generate-button"),
+                    ) {
                         Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "生成")
                     }
                 },
@@ -553,7 +562,9 @@ private fun DraftPanel(
 ) {
     AnimatedVisibility(drafts.isNotEmpty()) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("draft-panel"),
             shape = RoundedCornerShape(8.dp),
             color = Porcelain,
             tonalElevation = 2.dp,
@@ -644,7 +655,10 @@ private fun DraftEditorCard(
                 Text("丢弃")
             }
             Spacer(Modifier.width(8.dp))
-            Button(onClick = onConfirm) {
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("draft-save-button"),
+            ) {
                 Icon(Icons.Rounded.Save, contentDescription = null)
                 Text("保存")
             }
@@ -673,7 +687,9 @@ private fun SettingsSheet(
         OutlinedTextField(
             value = state.apiKeyInput,
             onValueChange = onApiKeyChanged,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("api-key-field"),
             label = { Text("DeepSeek API key") },
             singleLine = true,
         )
@@ -685,7 +701,10 @@ private fun SettingsSheet(
         ) {
             TextButton(onClick = onClose) { Text("关闭") }
             Spacer(Modifier.width(8.dp))
-            Button(onClick = onSave) { Text("保存") }
+            Button(
+                onClick = onSave,
+                modifier = Modifier.testTag("settings-save-button"),
+            ) { Text("保存") }
         }
     }
 }
