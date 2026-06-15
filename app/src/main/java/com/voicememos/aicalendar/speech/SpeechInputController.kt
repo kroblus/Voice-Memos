@@ -50,12 +50,12 @@ class SpeechInputController(
 
                 override fun onResults(results: Bundle?) {
                     onListeningChanged(false)
-                    results.bestText()?.let(onFinalResult)
+                    results?.bestText()?.let(onFinalResult)
                         ?: onError("没有识别到语音，可以直接输入文字。")
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
-                    partialResults.bestText()?.let(onPartialResult)
+                    partialResults?.bestText()?.let(onPartialResult)
                 }
 
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -104,4 +104,3 @@ class SpeechInputController(
             else -> "语音识别失败，可以直接输入文字。"
         }
 }
-

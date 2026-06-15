@@ -140,6 +140,7 @@ fun CalendarApp(viewModel: CalendarViewModel) {
                 onSelect = viewModel::setViewMode,
             )
             CalendarSurface(
+                modifier = Modifier.weight(1f),
                 state = state,
                 onDateSelected = viewModel::selectDate,
                 onMarkDone = viewModel::markDone,
@@ -238,15 +239,16 @@ private fun ViewModeSelector(
 
 @Composable
 private fun CalendarSurface(
+    modifier: Modifier = Modifier,
     state: CalendarUiState,
     onDateSelected: (LocalDate) -> Unit,
     onMarkDone: (String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .weight(1f),
+            .heightIn(min = 260.dp),
         shape = RoundedCornerShape(8.dp),
         color = Porcelain,
         tonalElevation = 1.dp,
