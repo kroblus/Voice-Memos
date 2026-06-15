@@ -28,21 +28,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.KeyboardVoice
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Save
-import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Today
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -521,7 +521,7 @@ private fun ComposerPanel(
                 minLines = 2,
                 trailingIcon = {
                     FilledIconButton(onClick = onSubmit) {
-                        Icon(Icons.Rounded.Send, contentDescription = "生成")
+                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "生成")
                     }
                 },
             )
@@ -677,7 +677,7 @@ private fun SettingsSheet(
             label = { Text("DeepSeek API key") },
             singleLine = true,
         )
-        Divider()
+        HorizontalDivider()
         Text("默认时长 30 分钟，默认提醒 10 分钟。", color = Graphite)
         Row(
             modifier = Modifier.fillMaxWidth(),
