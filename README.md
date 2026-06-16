@@ -31,10 +31,13 @@
 .\gradlew.bat :app:connectedDebugAndroidTest -PrunRealDeepSeekTests=true --console=plain
 ```
 
-Debug APK 输出位置：
+APK 输出位置：
 
 ```text
+app/build/outputs/apk/release/app-release.apk
 app/build/outputs/apk/debug/app-debug.apk
 ```
+
+本项目的 release 包使用本机 debug signing config 签名，适合内测安装；正式发布前应替换为正式签名。
 
 如果本机缺少 Android SDK，请先用 Android Studio 安装 SDK Platform 36、Build Tools 35.0.0 和 Platform Tools。
