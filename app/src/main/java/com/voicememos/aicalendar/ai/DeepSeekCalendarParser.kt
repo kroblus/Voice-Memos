@@ -73,7 +73,7 @@ class DeepSeekCalendarParser(
         val response = client.newCall(request).execute()
         val body = response.body?.string().orEmpty()
         if (!response.isSuccessful) {
-            throw IOException("DeepSeek request failed: HTTP ${response.code}: ${body.take(ERROR_BODY_LIMIT)}")
+            throw IOException(deepSeekErrorMessage(response.code, body))
         }
 
         val content = json.decodeFromString<ChatCompletionResponse>(body)
@@ -91,7 +91,7 @@ class DeepSeekCalendarParser(
             )
         }
 
-        val parsed = runCatching { json.decodeFromString<AiCalendarResponse>(content) }
+        val parsed = runCatching { json.decodeFromString<AiCalendarResponse>(content.unwrapJsonContent()) }
             .getOrElse {
                 return@withContext AiParseResult(
                     events = emptyList(),
@@ -107,6 +107,28 @@ class DeepSeekCalendarParser(
             defaultDurationMinutes = defaultDurationMinutes,
             defaultReminderMinutes = defaultReminderMinutes,
         )
+    }
+
+    private fun deepSeekErrorMessage(code: Int, body: String): String =
+        when (code) {
+            401, 403 -> "DeepSeek 请求失败：HTTP $code，API key 无效或权限不足，请在设置里重新保存。"
+            429 -> "DeepSeek 请求失败：HTTP 429，请求过于频繁，请稍后再试。"
+            in 500..599 -> "DeepSeek 请求失败：HTTP $code，服务暂时不可用，请稍后再试。"
+            else -> "DeepSeek 请求失败：HTTP $code，${body.take(ERROR_BODY_LIMIT)}"
+        }
+
+    private fun String.unwrapJsonContent(): String {
+        val trimmed = trim()
+        if (!trimmed.startsWith("```")) return trimmed
+
+        val lines = trimmed.lines()
+        val firstLine = lines.firstOrNull()?.trim().orEmpty()
+        val lastLine = lines.lastOrNull()?.trim().orEmpty()
+        return if (firstLine.startsWith("```") && lastLine == "```" && lines.size >= 3) {
+            lines.drop(1).dropLast(1).joinToString("\n").trim()
+        } else {
+            trimmed
+        }
     }
 
     private fun mockParseResult(

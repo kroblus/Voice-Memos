@@ -59,6 +59,11 @@ class VoiceCalendarFlowTest {
 
         composeRule.assertAnyTextDisplayed("给张三打电话")
         composeRule.assertAnyTextDisplayed("项目会")
+
+        composeRule.onNodeWithTag("settings-button").performClick()
+        composeRule.waitUntilNodeExists("api-key-field")
+        composeRule.onNodeWithTag("settings-clear-key-button").performClick()
+        composeRule.waitUntilNodeDoesNotExist("api-key-field")
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeExists(

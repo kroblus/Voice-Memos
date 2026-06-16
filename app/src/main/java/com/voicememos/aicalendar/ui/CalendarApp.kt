@@ -174,6 +174,7 @@ fun CalendarApp(viewModel: CalendarViewModel) {
                 state = state,
                 onApiKeyChanged = viewModel::updateApiKeyInput,
                 onSave = viewModel::saveApiKey,
+                onClearApiKey = viewModel::clearApiKey,
                 onClose = viewModel::closeSettings,
             )
         }
@@ -671,6 +672,7 @@ private fun SettingsSheet(
     state: CalendarUiState,
     onApiKeyChanged: (String) -> Unit,
     onSave: () -> Unit,
+    onClearApiKey: () -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -697,14 +699,25 @@ private fun SettingsSheet(
         Text("默认时长 30 分钟，默认提醒 10 分钟。", color = Graphite)
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onClose) { Text("关闭") }
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = onSave,
-                modifier = Modifier.testTag("settings-save-button"),
-            ) { Text("保存") }
+            if (state.apiKeySaved) {
+                TextButton(
+                    onClick = onClearApiKey,
+                    modifier = Modifier.testTag("settings-clear-key-button"),
+                ) { Text("清除密钥") }
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
+            Row(horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onClose) { Text("关闭") }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = onSave,
+                    modifier = Modifier.testTag("settings-save-button"),
+                ) { Text("保存") }
+            }
         }
     }
 }

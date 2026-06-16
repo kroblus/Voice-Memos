@@ -19,5 +19,22 @@
 .\gradlew.bat :app:lintDebug
 ```
 
-如果本机缺少 Android SDK，请先用 Android Studio 安装 SDK Platform 36、Build Tools 35.0.0 和 Platform Tools。
+完整本地检查：
 
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug :app:assembleDebugAndroidTest :app:connectedDebugAndroidTest --console=plain
+```
+
+真实 DeepSeek 设备流程测试需要在仓库根目录放置已被忽略的 `deepseekapi.txt`，然后运行：
+
+```powershell
+.\gradlew.bat :app:connectedDebugAndroidTest -PrunRealDeepSeekTests=true --console=plain
+```
+
+Debug APK 输出位置：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+如果本机缺少 Android SDK，请先用 Android Studio 安装 SDK Platform 36、Build Tools 35.0.0 和 Platform Tools。

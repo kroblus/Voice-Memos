@@ -69,6 +69,30 @@ class DeepSeekCalendarParserTest {
     }
 
     @Test
+    fun acceptsJsonWrappedInMarkdownFence() = runTest {
+        val parser = parserWith(
+            CapturingInterceptor(
+                responseBody = completionResponse(
+                    """
+                    ```json
+                    {"events":[{"title":"牙医","start_local":"2026-06-19T15:00:00","end_local":"2026-06-19T16:00:00","confidence":0.9}],"warnings":[]}
+                    ```
+                    """.trimIndent(),
+                ),
+            ),
+        )
+
+        val result = parser.parse(
+            transcript = "下周五下午三点到四点牙医",
+            apiKey = "unit-test-key",
+            zoneId = zoneId,
+        )
+
+        assertEquals("牙医", result.events.single().title)
+        assertTrue(result.events.single().canCreate)
+    }
+
+    @Test
     fun returnsConfirmationWarningWhenDeepSeekContentIsInvalidJson() = runTest {
         val parser = parserWith(
             CapturingInterceptor(responseBody = completionResponse("not-json")),
@@ -104,6 +128,7 @@ class DeepSeekCalendarParserTest {
 
         assertTrue(error is IOException)
         assertTrue(error?.message.orEmpty().contains("HTTP 401"))
+        assertTrue(error?.message.orEmpty().contains("API key"))
     }
 
     private fun parserWith(interceptor: CapturingInterceptor): DeepSeekCalendarParser =

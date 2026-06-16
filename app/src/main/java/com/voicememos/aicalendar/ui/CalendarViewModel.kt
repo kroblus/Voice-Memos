@@ -8,6 +8,7 @@ import com.voicememos.aicalendar.data.SettingsRepository
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.reminder.ReminderScheduler
 import com.voicememos.aicalendar.security.SecureApiKeyStore
+import java.io.InterruptedIOException
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,7 +43,7 @@ class CalendarViewModel(
     }
 
     fun selectToday() {
-        _uiState.update { it.copy(selectedDate = LocalDate.now()) }
+        _uiState.update { it.copy(selectedDate = LocalDate.now(zoneId)) }
     }
 
     fun setViewMode(mode: CalendarViewMode) {
@@ -122,7 +123,7 @@ class CalendarViewModel(
                 _uiState.update {
                     it.copy(
                         isParsing = false,
-                        errorMessage = error.message ?: "解析失败，请稍后再试。",
+                        errorMessage = error.toUserMessage(),
                     )
                 }
             }
@@ -212,4 +213,22 @@ class CalendarViewModel(
             )
         }
     }
+
+    fun clearApiKey() {
+        secureApiKeyStore.clear()
+        _uiState.update {
+            it.copy(
+                apiKeyInput = "",
+                apiKeySaved = false,
+                showSettings = false,
+                errorMessage = null,
+            )
+        }
+    }
+
+    private fun Throwable.toUserMessage(): String =
+        when (this) {
+            is InterruptedIOException -> "DeepSeek 响应超时，请检查网络后重试。"
+            else -> message?.takeIf { it.isNotBlank() } ?: "解析失败，请稍后再试。"
+        }
 }
