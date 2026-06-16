@@ -48,12 +48,12 @@ object AiResponseMapper {
             )
         }
 
-        val lowConfidence = drafts.any { it.aiConfidence < CONFIDENCE_THRESHOLD }
-        val incomplete = drafts.any { !it.canCreate }
         return AiParseResult(
             events = drafts,
             warnings = warnings.distinct(),
-            needsConfirmation = true || lowConfidence || incomplete,
+            // Voice-created events stay user-confirmed in the first release,
+            // even when all fields are complete and confidence is high.
+            needsConfirmation = true,
         )
     }
 
@@ -88,7 +88,4 @@ object AiResponseMapper {
                 null
             }
         }
-
-    private const val CONFIDENCE_THRESHOLD = 0.82
 }
-
