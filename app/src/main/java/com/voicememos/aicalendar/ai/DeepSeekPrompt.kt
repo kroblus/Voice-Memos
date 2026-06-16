@@ -8,6 +8,7 @@ object DeepSeekPrompt {
         """
         You are a calendar parsing engine. Return only valid json.
         Parse Chinese or English natural language into one or more calendar events.
+        A single transcript may contain multiple tasks. Split every distinct task, meeting, reminder, or errand into its own event when it has its own time or intent.
         Do not invent dates or times. If a required field is unclear, leave it null and add the field name to missing_fields.
         Required json shape:
         {
@@ -45,4 +46,3 @@ object DeepSeekPrompt {
         Return json only.
         """.trimIndent()
 }
-

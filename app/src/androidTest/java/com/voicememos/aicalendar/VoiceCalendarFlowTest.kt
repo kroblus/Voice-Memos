@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToString
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.rule.GrantPermissionRule
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -29,6 +30,8 @@ class VoiceCalendarFlowTest {
 
     @Test
     fun mockDeepSeekFlowCreatesEventsInCalendar() {
+        composeRule.assertInputActionButtonsDoNotOverlap()
+
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
@@ -64,6 +67,19 @@ class VoiceCalendarFlowTest {
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("settings-clear-key-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertInputActionButtonsDoNotOverlap() {
+        val voiceBounds = onNodeWithTag("voice-input-button").fetchSemanticsNode().boundsInRoot
+        val sendBounds = onNodeWithTag("generate-button").fetchSemanticsNode().boundsInRoot
+        val separated = voiceBounds.right <= sendBounds.left ||
+            sendBounds.right <= voiceBounds.left ||
+            voiceBounds.bottom <= sendBounds.top ||
+            sendBounds.bottom <= voiceBounds.top
+        assertTrue(
+            "Voice and send buttons overlap. voice=$voiceBounds send=$sendBounds",
+            separated,
+        )
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeExists(

@@ -51,7 +51,7 @@ class CalendarViewModel(
     }
 
     fun updateTextInput(value: String) {
-        _uiState.update { it.copy(textInput = value, errorMessage = null) }
+        _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
     }
 
     fun onListeningChanged(value: Boolean) {
@@ -72,7 +72,8 @@ class CalendarViewModel(
     }
 
     fun parseCurrentText() {
-        parseText(_uiState.value.textInput)
+        val state = _uiState.value
+        parseText(state.partialTranscript.ifBlank { state.textInput })
     }
 
     fun parseText(rawText: String) {

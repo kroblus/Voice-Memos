@@ -80,6 +80,9 @@ class SpeechInputController(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.SIMPLIFIED_CHINESE.toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_TIMEOUT_MILLIS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_TIMEOUT_MILLIS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, SILENCE_TIMEOUT_MILLIS)
             putExtra(RecognizerIntent.EXTRA_PROMPT, "说出一个或多个日程")
         }
 
@@ -103,4 +106,8 @@ class SpeechInputController(
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有听到语音，可以直接输入文字。"
             else -> "语音识别失败，可以直接输入文字。"
         }
+
+    private companion object {
+        const val SILENCE_TIMEOUT_MILLIS = 3_000L
+    }
 }

@@ -41,10 +41,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -111,17 +111,6 @@ fun CalendarApp(viewModel: CalendarViewModel) {
 
     Scaffold(
         containerColor = Paper,
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                },
-                containerColor = if (state.isListening) Clay else InkTeal,
-                contentColor = Color.White,
-            ) {
-                Icon(Icons.Rounded.KeyboardVoice, contentDescription = "语音输入")
-            }
-        },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -151,6 +140,13 @@ fun CalendarApp(viewModel: CalendarViewModel) {
                 state = state,
                 onTextChanged = viewModel::updateTextInput,
                 onSubmit = viewModel::parseCurrentText,
+                onVoiceInput = {
+                    if (state.isListening) {
+                        speechController.stop()
+                    } else {
+                        recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
             )
             WarningsAndErrors(state)
             DraftPanel(
@@ -507,6 +503,7 @@ private fun ComposerPanel(
     state: CalendarUiState,
     onTextChanged: (String) -> Unit,
     onSubmit: () -> Unit,
+    onVoiceInput: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -526,15 +523,35 @@ private fun ComposerPanel(
                     .testTag("transcript-field"),
                 label = { Text(if (state.isListening) "正在听" else "说一句或直接输入") },
                 minLines = 2,
-                trailingIcon = {
-                    FilledIconButton(
-                        onClick = onSubmit,
-                        modifier = Modifier.testTag("generate-button"),
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "生成")
-                    }
-                },
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilledIconButton(
+                    onClick = onVoiceInput,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("voice-input-button"),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = if (state.isListening) Clay else InkTeal,
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Icon(Icons.Rounded.KeyboardVoice, contentDescription = "语音输入")
+                }
+                Spacer(Modifier.width(8.dp))
+                FilledIconButton(
+                    onClick = onSubmit,
+                    enabled = !state.isParsing,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("generate-button"),
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "生成")
+                }
+            }
         }
     }
 }
