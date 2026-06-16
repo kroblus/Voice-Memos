@@ -7,6 +7,8 @@ class SettingsRepository(
 ) {
     fun observeDefaultReminderMinutes(): Flow<String?> = dao.observeValue(DEFAULT_REMINDER_MINUTES)
 
+    fun observeDefaultDurationMinutes(): Flow<String?> = dao.observeValue(DEFAULT_DURATION_MINUTES)
+
     fun observeThemeMode(): Flow<String?> = dao.observeValue(THEME_MODE)
 
     suspend fun setThemeMode(value: String) {

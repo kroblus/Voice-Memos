@@ -1,6 +1,7 @@
 package com.voicememos.aicalendar.ui
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -8,6 +9,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,13 +22,16 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Check
@@ -37,10 +42,12 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.KeyboardVoice
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Today
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -53,17 +60,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -109,6 +120,14 @@ private fun CalendarWorkbench(
         onDispose { speechController.destroy() }
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(state.successMessage) {
+        state.successMessage?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            viewModel.consumeSuccessMessage()
+        }
+    }
+
     val recordAudioLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -120,10 +139,12 @@ private fun CalendarWorkbench(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             ComposerBar(
                 state = state,
                 onTextChanged = viewModel::updateTextInput,
+                onReuseTranscript = viewModel::reuseTranscript,
                 onSubmit = viewModel::parseCurrentText,
                 onVoiceInput = {
                     if (state.isListening) {
@@ -169,8 +190,48 @@ private fun CalendarWorkbench(
                 onDateSelected = viewModel::selectDate,
                 onMarkDone = viewModel::markDone,
                 onDelete = viewModel::deleteEvent,
+                onEventSelected = viewModel::openEventEditor,
+                onAgendaQueryChanged = viewModel::updateAgendaQuery,
+                onAgendaFilterSelected = viewModel::setAgendaFilter,
+                onClearCompleted = viewModel::clearCompletedEvents,
             )
             WarningsAndErrors(state)
+            DraftReturnBar(
+                drafts = state.draftEditors,
+                visible = state.draftEditors.isNotEmpty() && !state.showDraftSheet,
+                onOpen = viewModel::showDraftSheet,
+            )
+        }
+    }
+
+    if (state.showSettings) {
+        ModalBottomSheet(onDismissRequest = viewModel::closeSettings) {
+            SettingsSheet(
+                state = state,
+                onApiKeyChanged = viewModel::updateApiKeyInput,
+                onDefaultReminderChanged = viewModel::updateDefaultReminderMinutesInput,
+                onDefaultDurationChanged = viewModel::updateDefaultDurationMinutesInput,
+                onExportEvents = {
+                    if (state.events.isEmpty()) {
+                        viewModel.showError("暂无可导出的日程。")
+                    } else {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_SUBJECT, "声历日程备份")
+                            putExtra(Intent.EXTRA_TEXT, exportEventsJson(state.events))
+                        }
+                        context.startActivity(Intent.createChooser(intent, "导出日程"))
+                    }
+                },
+                onSave = viewModel::saveApiKey,
+                onClearApiKey = viewModel::clearApiKey,
+                onClose = viewModel::closeSettings,
+            )
+        }
+    }
+
+    if (state.draftEditors.isNotEmpty() && state.showDraftSheet) {
+        ModalBottomSheet(onDismissRequest = viewModel::hideDraftSheet) {
             DraftPanel(
                 drafts = state.draftEditors,
                 onUpdate = viewModel::updateDraft,
@@ -192,14 +253,13 @@ private fun CalendarWorkbench(
         }
     }
 
-    if (state.showSettings) {
-        ModalBottomSheet(onDismissRequest = viewModel::closeSettings) {
-            SettingsSheet(
-                state = state,
-                onApiKeyChanged = viewModel::updateApiKeyInput,
-                onSave = viewModel::saveApiKey,
-                onClearApiKey = viewModel::clearApiKey,
-                onClose = viewModel::closeSettings,
+    state.eventEditor?.let { editor ->
+        ModalBottomSheet(onDismissRequest = viewModel::closeEventEditor) {
+            EventEditorSheet(
+                editor = editor,
+                onUpdate = viewModel::updateEventEditor,
+                onSave = viewModel::saveEventEditor,
+                onClose = viewModel::closeEventEditor,
             )
         }
     }
@@ -296,6 +356,10 @@ private fun CalendarSurface(
     onDateSelected: (LocalDate) -> Unit,
     onMarkDone: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onEventSelected: (String) -> Unit,
+    onAgendaQueryChanged: (String) -> Unit,
+    onAgendaFilterSelected: (AgendaFilter) -> Unit,
+    onClearCompleted: () -> Unit,
 ) {
     Surface(
         modifier = modifier
@@ -320,18 +384,28 @@ private fun CalendarSurface(
                     events = state.events,
                     onDateSelected = onDateSelected,
                 )
-                CalendarViewMode.DAY -> DayHeading(state.selectedDate)
-                CalendarViewMode.AGENDA -> Text(
-                    "近期",
-                    style = MaterialTheme.typography.headlineSmall,
+                CalendarViewMode.DAY -> {
+                    DayHeading(state.selectedDate)
+                    NextEventBanner(selectedDate = state.selectedDate, events = state.events)
+                }
+                CalendarViewMode.AGENDA -> AgendaControls(
+                    query = state.agendaQuery,
+                    filter = state.agendaFilter,
+                    completedCount = state.events.count { it.status == EventStatus.DONE },
+                    onQueryChanged = onAgendaQueryChanged,
+                    onFilterSelected = onAgendaFilterSelected,
+                    onClearCompleted = onClearCompleted,
                 )
             }
             EventList(
                 selectedDate = state.selectedDate,
                 mode = state.viewMode,
                 events = state.events,
+                agendaQuery = state.agendaQuery,
+                agendaFilter = state.agendaFilter,
                 onMarkDone = onMarkDone,
                 onDelete = onDelete,
+                onEventSelected = onEventSelected,
             )
         }
     }
@@ -502,16 +576,119 @@ private fun DayHeading(selectedDate: LocalDate) {
 }
 
 @Composable
+private fun NextEventBanner(
+    selectedDate: LocalDate,
+    events: List<CalendarEvent>,
+) {
+    val zone = ZoneId.systemDefault()
+    val now = java.time.Instant.now()
+    val next = events
+        .filter { event ->
+            event.status == EventStatus.SCHEDULED &&
+                event.startAt.atZone(zone).toLocalDate() == selectedDate &&
+                (selectedDate != LocalDate.now(zone) || !event.startAt.isBefore(now))
+        }
+        .minByOrNull { it.startAt }
+        ?: return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.Notifications, contentDescription = null)
+            Text(
+                "下一项 ${next.startAt.atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))} ${next.title}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AgendaControls(
+    query: String,
+    filter: AgendaFilter,
+    completedCount: Int,
+    onQueryChanged: (String) -> Unit,
+    onFilterSelected: (AgendaFilter) -> Unit,
+    onClearCompleted: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("近期", style = MaterialTheme.typography.headlineSmall)
+            if (completedCount > 0) {
+                TextButton(
+                    onClick = onClearCompleted,
+                    modifier = Modifier.testTag("clear-completed-button"),
+                ) {
+                    Icon(Icons.Rounded.Delete, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("清理已完成")
+                }
+            }
+        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChanged,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("agenda-search-field"),
+            shape = RoundedCornerShape(8.dp),
+            label = { Text("搜索日程") },
+            singleLine = true,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AgendaFilter.entries.forEach { option ->
+                FilterChip(
+                    selected = filter == option,
+                    onClick = { onFilterSelected(option) },
+                    label = { Text(option.label) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun EventList(
     selectedDate: LocalDate,
     mode: CalendarViewMode,
     events: List<CalendarEvent>,
+    agendaQuery: String,
+    agendaFilter: AgendaFilter,
     onMarkDone: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onEventSelected: (String) -> Unit,
 ) {
     val zone = ZoneId.systemDefault()
     val visible = when (mode) {
-        CalendarViewMode.AGENDA -> events.take(30)
+        CalendarViewMode.AGENDA -> events
+            .filter { event ->
+                when (agendaFilter) {
+                    AgendaFilter.ALL -> true
+                    AgendaFilter.SCHEDULED -> event.status == EventStatus.SCHEDULED
+                    AgendaFilter.DONE -> event.status == EventStatus.DONE
+                }
+            }
+            .filter { event ->
+                val query = agendaQuery.trim()
+                query.isEmpty() ||
+                    event.title.contains(query, ignoreCase = true) ||
+                    event.notes.orEmpty().contains(query, ignoreCase = true)
+            }
+            .take(50)
         else -> events.filter { it.startAt.atZone(zone).toLocalDate() == selectedDate }
     }
     if (visible.isEmpty()) {
@@ -528,8 +705,33 @@ private fun EventList(
         modifier = Modifier.testTag("event-list"),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(visible, key = { it.id }) { event ->
-            EventRow(event = event, onMarkDone = onMarkDone, onDelete = onDelete)
+        if (mode == CalendarViewMode.AGENDA) {
+            visible.groupBy { it.startAt.atZone(zone).toLocalDate() }.forEach { (date, dailyEvents) ->
+                item(key = "date-$date") {
+                    Text(
+                        date.format(DateTimeFormatter.ofPattern("M月d日 E", Locale.SIMPLIFIED_CHINESE)),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(dailyEvents, key = { it.id }) { event ->
+                    EventRow(
+                        event = event,
+                        onMarkDone = onMarkDone,
+                        onDelete = onDelete,
+                        onEventSelected = onEventSelected,
+                    )
+                }
+            }
+        } else {
+            items(visible, key = { it.id }) { event ->
+                EventRow(
+                    event = event,
+                    onMarkDone = onMarkDone,
+                    onDelete = onDelete,
+                    onEventSelected = onEventSelected,
+                )
+            }
         }
     }
 }
@@ -539,6 +741,7 @@ private fun EventRow(
     event: CalendarEvent,
     onMarkDone: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onEventSelected: (String) -> Unit,
 ) {
     val zone = ZoneId.systemDefault()
     Row(
@@ -546,6 +749,7 @@ private fun EventRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.background)
+            .clickable { onEventSelected(event.id) }
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -589,6 +793,7 @@ private fun EventRow(
 private fun ComposerBar(
     state: CalendarUiState,
     onTextChanged: (String) -> Unit,
+    onReuseTranscript: (String) -> Unit,
     onSubmit: () -> Unit,
     onVoiceInput: () -> Unit,
     modifier: Modifier = Modifier,
@@ -617,6 +822,25 @@ private fun ComposerBar(
                 minLines = 2,
                 maxLines = 4,
             )
+            if (state.recentTranscripts.isNotEmpty() &&
+                state.textInput.isBlank() &&
+                state.partialTranscript.isBlank()
+            ) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.recentTranscripts) { transcript ->
+                        AssistChip(
+                            onClick = { onReuseTranscript(transcript) },
+                            label = {
+                                Text(
+                                    transcript,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -671,6 +895,43 @@ private fun WarningsAndErrors(state: CalendarUiState) {
 }
 
 @Composable
+private fun DraftReturnBar(
+    drafts: List<DraftEditor>,
+    visible: Boolean,
+    onOpen: () -> Unit,
+) {
+    AnimatedVisibility(visible) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("draft-return-bar")
+                .clickable(onClick = onOpen),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("待确认 ${drafts.size} 项", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        drafts.joinToString("  ") { it.title.ifBlank { "未命名" } },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                TextButton(onClick = onOpen) { Text("继续确认") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DraftPanel(
     drafts: List<DraftEditor>,
     onUpdate: (String, (DraftEditor) -> DraftEditor) -> Unit,
@@ -719,6 +980,18 @@ private fun DraftPanel(
                             Text("全部保存")
                         }
                     }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Notifications, contentDescription = null)
+                    Text(
+                        "保存时会请求通知权限，用来准时提醒。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
                 LazyColumn(
                     modifier = Modifier
@@ -883,9 +1156,89 @@ private fun DraftEditor.reminderSummary(): String {
 }
 
 @Composable
+private fun EventEditorSheet(
+    editor: EventEditor,
+    onUpdate: ((EventEditor) -> EventEditor) -> Unit,
+    onSave: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(20.dp)
+            .verticalScroll(rememberScrollState())
+            .testTag("event-editor-sheet"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("编辑事件", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = editor.title,
+            onValueChange = { value -> onUpdate { it.copy(title = value) } },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            label = { Text("标题") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = editor.startLocal,
+            onValueChange = { value -> onUpdate { it.copy(startLocal = value) } },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            label = { Text(if (editor.allDay) "日期 yyyy-MM-dd" else "开始 yyyy-MM-dd HH:mm") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = editor.endLocal,
+            onValueChange = { value -> onUpdate { it.copy(endLocal = value) } },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            label = { Text(if (editor.allDay) "结束日期" else "结束时间") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = editor.reminderMinutes,
+            onValueChange = { value -> onUpdate { it.copy(reminderMinutes = value) } },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            label = { Text("提醒分钟，逗号分隔") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = editor.notes,
+            onValueChange = { value -> onUpdate { it.copy(notes = value) } },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            label = { Text("备注") },
+            minLines = 2,
+            maxLines = 4,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onClose) { Text("关闭") }
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = onSave,
+                enabled = editor.title.isNotBlank() && editor.startLocal.isNotBlank(),
+                modifier = Modifier.testTag("event-editor-save-button"),
+            ) {
+                Icon(Icons.Rounded.Save, contentDescription = null)
+                Text("保存")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
 private fun SettingsSheet(
     state: CalendarUiState,
     onApiKeyChanged: (String) -> Unit,
+    onDefaultReminderChanged: (String) -> Unit,
+    onDefaultDurationChanged: (String) -> Unit,
+    onExportEvents: () -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
     onClose: () -> Unit,
@@ -910,7 +1263,63 @@ private fun SettingsSheet(
             label = { Text("DeepSeek API key") },
             singleLine = true,
         )
-        Text("默认时长 30 分钟；事件开始时通知，也可保留提前提醒。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OutlinedTextField(
+                value = state.defaultDurationMinutesInput,
+                onValueChange = onDefaultDurationChanged,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("default-duration-field"),
+                shape = RoundedCornerShape(8.dp),
+                label = { Text("默认时长") },
+                suffix = { Text("分钟") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            OutlinedTextField(
+                value = state.defaultReminderMinutesInput,
+                onValueChange = onDefaultReminderChanged,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("default-reminder-field"),
+                shape = RoundedCornerShape(8.dp),
+                label = { Text("提前提醒") },
+                suffix = { Text("分钟") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Notifications, contentDescription = null)
+                Column {
+                    Text("到点提醒已开启", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "每个事件都会保留 0 分钟提醒。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+        TextButton(
+            onClick = onExportEvents,
+            enabled = state.events.isNotEmpty(),
+            modifier = Modifier.testTag("settings-export-button"),
+        ) {
+            Text("导出本地日程")
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -935,3 +1344,39 @@ private fun SettingsSheet(
         }
     }
 }
+
+private fun exportEventsJson(events: List<CalendarEvent>): String =
+    events.joinToString(
+        prefix = "[\n",
+        postfix = "\n]",
+        separator = ",\n",
+    ) { event ->
+        """
+        |  {
+        |    "id": "${event.id.escapeJson()}",
+        |    "title": "${event.title.escapeJson()}",
+        |    "notes": ${event.notes?.let { "\"${it.escapeJson()}\"" } ?: "null"},
+        |    "startAt": "${event.startAt}",
+        |    "endAt": ${event.endAt?.let { "\"$it\"" } ?: "null"},
+        |    "allDay": ${event.allDay},
+        |    "reminderMinutes": [${event.reminderMinutes.joinToString(",")}],
+        |    "status": "${event.status.name}",
+        |    "sourceTranscript": ${event.sourceTranscript?.let { "\"${it.escapeJson()}\"" } ?: "null"},
+        |    "aiConfidence": ${event.aiConfidence}
+        |  }
+        """.trimMargin()
+    }
+
+private fun String.escapeJson(): String =
+    buildString {
+        this@escapeJson.forEach { char ->
+            when (char) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(char)
+            }
+        }
+    }

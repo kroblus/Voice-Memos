@@ -16,6 +16,12 @@ enum class CalendarViewMode(val label: String) {
     AGENDA("清单"),
 }
 
+enum class AgendaFilter(val label: String) {
+    ALL("全部"),
+    SCHEDULED("未完成"),
+    DONE("已完成"),
+}
+
 data class CalendarUiState(
     val selectedDate: LocalDate = LocalDate.now(),
     val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
@@ -26,11 +32,19 @@ data class CalendarUiState(
     val isListening: Boolean = false,
     val isParsing: Boolean = false,
     val draftEditors: List<DraftEditor> = emptyList(),
+    val showDraftSheet: Boolean = false,
     val warnings: List<String> = emptyList(),
     val errorMessage: String? = null,
+    val successMessage: String? = null,
     val showSettings: Boolean = false,
     val apiKeyInput: String = "",
     val apiKeySaved: Boolean = false,
+    val defaultReminderMinutesInput: String = "10",
+    val defaultDurationMinutesInput: String = "30",
+    val agendaQuery: String = "",
+    val agendaFilter: AgendaFilter = AgendaFilter.ALL,
+    val eventEditor: EventEditor? = null,
+    val recentTranscripts: List<String> = emptyList(),
 )
 
 data class DraftEditor(
@@ -84,6 +98,43 @@ fun DraftCalendarEvent.toEditor(zoneId: ZoneId): DraftEditor =
         sourceTranscript = sourceTranscript,
         aiConfidence = aiConfidence,
         missingFields = missingFields,
+    )
+
+data class EventEditor(
+    val eventId: String,
+    val title: String,
+    val notes: String,
+    val startLocal: String,
+    val endLocal: String,
+    val allDay: Boolean,
+    val reminderMinutes: String,
+) {
+    fun parsedStart(zoneId: ZoneId): Instant? = parseLocalInstant(startLocal, allDay, zoneId)
+
+    fun parsedEnd(zoneId: ZoneId): Instant? = parseLocalInstant(endLocal, allDay, zoneId)
+
+    fun parsedReminders(): List<Int> =
+        reminderMinutes.split(",")
+            .mapNotNull { it.trim().toIntOrNull() }
+            .filter { it >= 0 }
+            .ifEmpty { listOf(10) }
+            .plus(0)
+            .distinct()
+            .sorted()
+
+    fun canSave(zoneId: ZoneId): Boolean =
+        title.isNotBlank() && parsedStart(zoneId) != null
+}
+
+fun CalendarEvent.toEditor(zoneId: ZoneId): EventEditor =
+    EventEditor(
+        eventId = id,
+        title = title,
+        notes = notes.orEmpty(),
+        startLocal = startAt.formatForEditor(allDay, zoneId),
+        endLocal = endAt?.formatForEditor(allDay, zoneId).orEmpty(),
+        allDay = allDay,
+        reminderMinutes = reminderMinutes.joinToString(","),
     )
 
 private fun Instant.formatForEditor(allDay: Boolean, zoneId: ZoneId): String {

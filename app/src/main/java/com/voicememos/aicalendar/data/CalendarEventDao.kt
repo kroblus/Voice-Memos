@@ -37,7 +37,33 @@ interface CalendarEventDao {
     @Query("UPDATE calendar_events SET status = :status, updatedAtEpochMillis = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, updatedAt: Long)
 
+    @Query(
+        """
+        UPDATE calendar_events
+        SET title = :title,
+            notes = :notes,
+            startAtEpochMillis = :startAt,
+            endAtEpochMillis = :endAt,
+            allDay = :allDay,
+            reminderMinutesCsv = :reminderMinutes,
+            updatedAtEpochMillis = :updatedAt
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateDetails(
+        id: String,
+        title: String,
+        notes: String?,
+        startAt: Long,
+        endAt: Long?,
+        allDay: Boolean,
+        reminderMinutes: String,
+        updatedAt: Long,
+    )
+
     @Query("DELETE FROM calendar_events WHERE id = :id")
     suspend fun deleteById(id: String)
-}
 
+    @Query("DELETE FROM calendar_events WHERE status = :status")
+    suspend fun deleteByStatus(status: String)
+}

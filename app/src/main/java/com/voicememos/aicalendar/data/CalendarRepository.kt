@@ -31,8 +31,41 @@ class CalendarRepository(
         )
     }
 
+    suspend fun updateDetails(
+        original: CalendarEvent,
+        title: String,
+        notes: String?,
+        startAt: Instant,
+        endAt: Instant?,
+        allDay: Boolean,
+        reminderMinutes: List<Int>,
+    ): CalendarEvent {
+        val updated = original.copy(
+            title = title.trim(),
+            notes = notes?.trim()?.takeIf { it.isNotEmpty() },
+            startAt = startAt,
+            endAt = endAt,
+            allDay = allDay,
+            reminderMinutes = reminderMinutes.toReminderCsv().toReminderMinutes(),
+        )
+        dao.updateDetails(
+            id = original.id,
+            title = updated.title,
+            notes = updated.notes,
+            startAt = updated.startAt.toEpochMilli(),
+            endAt = updated.endAt?.toEpochMilli(),
+            allDay = updated.allDay,
+            reminderMinutes = updated.reminderMinutes.toReminderCsv(),
+            updatedAt = Instant.now().toEpochMilli(),
+        )
+        return updated
+    }
+
     suspend fun delete(id: String) {
         dao.deleteById(id)
     }
-}
 
+    suspend fun deleteCompleted() {
+        dao.deleteByStatus(EventStatus.DONE.name)
+    }
+}

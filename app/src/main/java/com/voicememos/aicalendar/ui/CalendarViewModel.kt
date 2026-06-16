@@ -47,6 +47,24 @@ class CalendarViewModel(
                     }
                 }
         }
+        viewModelScope.launch {
+            settingsRepository.observeDefaultReminderMinutes()
+                .distinctUntilChanged()
+                .collect { value ->
+                    _uiState.update {
+                        it.copy(defaultReminderMinutesInput = value?.toIntOrNull()?.coerceAtLeast(0)?.toString() ?: "10")
+                    }
+                }
+        }
+        viewModelScope.launch {
+            settingsRepository.observeDefaultDurationMinutes()
+                .distinctUntilChanged()
+                .collect { value ->
+                    _uiState.update {
+                        it.copy(defaultDurationMinutesInput = value?.toIntOrNull()?.coerceAtLeast(1)?.toString() ?: "30")
+                    }
+                }
+        }
     }
 
     fun selectDate(date: LocalDate) {
@@ -69,6 +87,10 @@ class CalendarViewModel(
     }
 
     fun updateTextInput(value: String) {
+        _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
+    }
+
+    fun reuseTranscript(value: String) {
         _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
     }
 
@@ -130,12 +152,17 @@ class CalendarViewModel(
                     it.copy(
                         isParsing = false,
                         draftEditors = result.events.map { draft -> draft.toEditor(zoneId) },
+                        showDraftSheet = result.events.isNotEmpty(),
                         warnings = result.warnings,
                         errorMessage = if (result.events.isEmpty()) {
                             result.warnings.firstOrNull() ?: "没有解析出可创建的日程。"
                         } else {
                             null
                         },
+                        recentTranscripts = it.recentTranscripts
+                            .filterNot { recent -> recent == transcript }
+                            .let { recent -> listOf(transcript) + recent }
+                            .take(3),
                     )
                 }
             }.onFailure { error ->
@@ -161,12 +188,26 @@ class CalendarViewModel(
 
     fun discardDraft(draftId: String) {
         _uiState.update { state ->
-            state.copy(draftEditors = state.draftEditors.filterNot { it.draftId == draftId })
+            val remaining = state.draftEditors.filterNot { it.draftId == draftId }
+            state.copy(
+                draftEditors = remaining,
+                showDraftSheet = state.showDraftSheet && remaining.isNotEmpty(),
+            )
         }
     }
 
     fun clearDrafts() {
-        _uiState.update { it.copy(draftEditors = emptyList(), warnings = emptyList()) }
+        _uiState.update { it.copy(draftEditors = emptyList(), showDraftSheet = false, warnings = emptyList()) }
+    }
+
+    fun showDraftSheet() {
+        _uiState.update {
+            if (it.draftEditors.isEmpty()) it else it.copy(showDraftSheet = true)
+        }
+    }
+
+    fun hideDraftSheet() {
+        _uiState.update { it.copy(showDraftSheet = false) }
     }
 
     fun confirmDraft(draftId: String) {
@@ -181,11 +222,15 @@ class CalendarViewModel(
             val event = calendarRepository.createFromDraft(draft)
             reminderScheduler.schedule(event)
             _uiState.update { state ->
+                val remainingDrafts = state.draftEditors.filterNot { it.draftId == draftId }
                 state.copy(
                     selectedDate = event.startAt.atZone(zoneId).toLocalDate(),
-                    draftEditors = state.draftEditors.filterNot { it.draftId == draftId },
+                    draftEditors = remainingDrafts,
+                    showDraftSheet = remainingDrafts.isNotEmpty(),
                     textInput = "",
+                    partialTranscript = "",
                     errorMessage = null,
+                    successMessage = "已保存 1 项",
                 )
             }
         }
@@ -210,13 +255,16 @@ class CalendarViewModel(
                 state.copy(
                     selectedDate = savedEvents.first().startAt.atZone(zoneId).toLocalDate(),
                     draftEditors = remainingDrafts,
+                    showDraftSheet = remainingDrafts.isNotEmpty(),
                     textInput = if (remainingDrafts.isEmpty()) "" else state.textInput,
+                    partialTranscript = if (remainingDrafts.isEmpty()) "" else state.partialTranscript,
                     warnings = if (remainingDrafts.isEmpty()) emptyList() else state.warnings,
                     errorMessage = if (remainingDrafts.isEmpty()) {
                         null
                     } else {
                         "还有 ${remainingDrafts.size} 个草稿缺少标题或时间。"
                     },
+                    successMessage = "已保存 ${savedEvents.size} 项",
                 )
             }
         }
@@ -240,6 +288,77 @@ class CalendarViewModel(
         }
     }
 
+    fun openEventEditor(eventId: String) {
+        val event = _uiState.value.events.firstOrNull { it.id == eventId } ?: return
+        _uiState.update { it.copy(eventEditor = event.toEditor(zoneId), errorMessage = null) }
+    }
+
+    fun updateEventEditor(transform: (EventEditor) -> EventEditor) {
+        _uiState.update { state ->
+            state.copy(eventEditor = state.eventEditor?.let(transform))
+        }
+    }
+
+    fun closeEventEditor() {
+        _uiState.update { it.copy(eventEditor = null, errorMessage = null) }
+    }
+
+    fun saveEventEditor() {
+        val editor = _uiState.value.eventEditor ?: return
+        val original = _uiState.value.events.firstOrNull { it.id == editor.eventId } ?: return
+        val start = editor.parsedStart(zoneId)
+        val end = editor.parsedEnd(zoneId)
+        if (editor.title.isBlank() || start == null) {
+            showError("事件需要标题和开始时间。")
+            return
+        }
+        if (end != null && end.isBefore(start)) {
+            showError("结束时间不能早于开始时间。")
+            return
+        }
+
+        viewModelScope.launch {
+            val updated = calendarRepository.updateDetails(
+                original = original,
+                title = editor.title,
+                notes = editor.notes,
+                startAt = start,
+                endAt = end,
+                allDay = editor.allDay,
+                reminderMinutes = editor.parsedReminders(),
+            )
+            reminderScheduler.cancel(original.id, original.reminderMinutes)
+            if (updated.status == EventStatus.SCHEDULED) {
+                reminderScheduler.schedule(updated)
+            }
+            _uiState.update {
+                it.copy(
+                    selectedDate = updated.startAt.atZone(zoneId).toLocalDate(),
+                    eventEditor = null,
+                    errorMessage = null,
+                    successMessage = "事件已更新",
+                )
+            }
+        }
+    }
+
+    fun updateAgendaQuery(value: String) {
+        _uiState.update { it.copy(agendaQuery = value) }
+    }
+
+    fun setAgendaFilter(filter: AgendaFilter) {
+        _uiState.update { it.copy(agendaFilter = filter) }
+    }
+
+    fun clearCompletedEvents() {
+        val completed = _uiState.value.events.count { it.status == EventStatus.DONE }
+        if (completed == 0) return
+        viewModelScope.launch {
+            calendarRepository.deleteCompleted()
+            _uiState.update { it.copy(successMessage = "已清理 $completed 项") }
+        }
+    }
+
     fun openSettings() {
         _uiState.update { it.copy(showSettings = true, apiKeyInput = "") }
     }
@@ -252,14 +371,34 @@ class CalendarViewModel(
         _uiState.update { it.copy(apiKeyInput = value) }
     }
 
+    fun updateDefaultReminderMinutesInput(value: String) {
+        _uiState.update { it.copy(defaultReminderMinutesInput = value.filter(Char::isDigit)) }
+    }
+
+    fun updateDefaultDurationMinutesInput(value: String) {
+        _uiState.update { it.copy(defaultDurationMinutesInput = value.filter(Char::isDigit)) }
+    }
+
     fun saveApiKey() {
-        secureApiKeyStore.save(_uiState.value.apiKeyInput)
+        val state = _uiState.value
+        val defaultReminder = state.defaultReminderMinutesInput.toIntOrNull()
+        val defaultDuration = state.defaultDurationMinutesInput.toIntOrNull()
+        if (defaultReminder == null || defaultDuration == null || defaultDuration <= 0) {
+            showError("默认提醒和默认时长需要填写有效数字。")
+            return
+        }
+        state.apiKeyInput.trim().takeIf { it.isNotEmpty() }?.let(secureApiKeyStore::save)
+        viewModelScope.launch {
+            settingsRepository.setDefaultReminderMinutes(defaultReminder)
+            settingsRepository.setDefaultDurationMinutes(defaultDuration)
+        }
         _uiState.update {
             it.copy(
                 apiKeyInput = "",
                 apiKeySaved = secureApiKeyStore.hasKey(),
                 showSettings = false,
                 errorMessage = null,
+                successMessage = "设置已保存",
             )
         }
     }
@@ -274,6 +413,10 @@ class CalendarViewModel(
                 errorMessage = null,
             )
         }
+    }
+
+    fun consumeSuccessMessage() {
+        _uiState.update { it.copy(successMessage = null) }
     }
 
     private fun Throwable.toUserMessage(): String =
