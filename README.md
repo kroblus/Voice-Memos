@@ -2,6 +2,10 @@
 
 声历是一个语音优先的自定义日历 Android 应用。用户说出一段自然语言，应用使用系统语音识别转文字，再调用 DeepSeek 将文本解析成一个或多个日程草稿，确认后写入应用内日历。
 
+## Codex 项目记忆
+
+后续 Codex 对话接手本项目时，先阅读 [docs/codex-project-memory.md](docs/codex-project-memory.md)。里面记录了当前 UI/多任务解析状态、关键文件、验证命令、APK 位置和不能提交 DeepSeek key 的约束。
+
 ## 当前范围
 
 - Kotlin + Jetpack Compose 原生 Android 应用
