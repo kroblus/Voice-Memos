@@ -6,6 +6,11 @@ plugins {
     alias(libs.plugins.kotlin.kapt)
 }
 
+val runRealDeepSeekTests = providers.gradleProperty("runRealDeepSeekTests")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+val deepSeekApiKeyFile = rootProject.layout.projectDirectory.file("deepseekapi.txt").asFile
+
 android {
     namespace = "com.voicememos.aicalendar"
     compileSdk = 36
@@ -18,6 +23,9 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (runRealDeepSeekTests.get() && deepSeekApiKeyFile.isFile) {
+            testInstrumentationRunnerArguments["deepseekApiKey"] = deepSeekApiKeyFile.readText().trim()
+        }
     }
 
     buildTypes {

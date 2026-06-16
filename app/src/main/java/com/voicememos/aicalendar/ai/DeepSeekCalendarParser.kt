@@ -19,9 +19,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 class DeepSeekCalendarParser(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build(),
     private val json: Json = Json {
+        encodeDefaults = true
         ignoreUnknownKeys = true
         explicitNulls = false
         isLenient = true
@@ -70,7 +73,7 @@ class DeepSeekCalendarParser(
         val response = client.newCall(request).execute()
         val body = response.body?.string().orEmpty()
         if (!response.isSuccessful) {
-            throw IOException("DeepSeek request failed: HTTP ${response.code}")
+            throw IOException("DeepSeek request failed: HTTP ${response.code}: ${body.take(ERROR_BODY_LIMIT)}")
         }
 
         val content = json.decodeFromString<ChatCompletionResponse>(body)
@@ -151,6 +154,7 @@ class DeepSeekCalendarParser(
     private companion object {
         const val MOCK_API_KEY = "mock-deepseek"
         const val DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
+        const val ERROR_BODY_LIMIT = 240
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
@@ -159,9 +163,15 @@ class DeepSeekCalendarParser(
 private data class ChatCompletionRequest(
     val model: String = "deepseek-v4-flash",
     val messages: List<ChatMessage>,
+    val thinking: ThinkingConfig = ThinkingConfig(),
     @SerialName("response_format") val responseFormat: ResponseFormat = ResponseFormat(),
     @SerialName("max_tokens") val maxTokens: Int = 1200,
     val stream: Boolean = false,
+)
+
+@Serializable
+private data class ThinkingConfig(
+    val type: String = "disabled",
 )
 
 @Serializable
