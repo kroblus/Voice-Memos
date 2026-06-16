@@ -44,6 +44,7 @@ data class DraftEditor(
     val sourceTranscript: String,
     val aiConfidence: Double,
     val missingFields: List<String>,
+    val expanded: Boolean = false,
 ) {
     fun toDraft(zoneId: ZoneId): DraftCalendarEvent {
         val start = parseLocalInstant(startLocal, allDay, zoneId)

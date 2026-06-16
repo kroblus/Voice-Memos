@@ -138,8 +138,35 @@ class DeepSeekCalendarParser(
         defaultReminderMinutes: Int,
     ): AiParseResult {
         val baseDate = clock.instant().atZone(zoneId).toLocalDate().plusDays(1)
-        val response = AiCalendarResponse(
-            events = listOf(
+        val normalizedTranscript = transcript.replace(Regex("\\s|，|,|。"), "")
+        val events = if (
+            normalizedTranscript.contains("打开电脑") &&
+            normalizedTranscript.contains("打开手机")
+        ) {
+            listOf(
+                AiCalendarEvent(
+                    title = "打开电脑",
+                    notes = "由 mock DeepSeek 回应生成",
+                    startLocal = "${baseDate}T11:00:00",
+                    endLocal = "${baseDate}T11:30:00",
+                    allDay = false,
+                    reminderMinutes = listOf(defaultReminderMinutes),
+                    confidence = 0.95,
+                    missingFields = emptyList(),
+                ),
+                AiCalendarEvent(
+                    title = "打开手机",
+                    notes = "由 mock DeepSeek 回应生成",
+                    startLocal = "${baseDate}T12:00:00",
+                    endLocal = "${baseDate}T12:30:00",
+                    allDay = false,
+                    reminderMinutes = listOf(defaultReminderMinutes),
+                    confidence = 0.94,
+                    missingFields = emptyList(),
+                ),
+            )
+        } else {
+            listOf(
                 AiCalendarEvent(
                     title = "给张三打电话",
                     notes = "由 mock DeepSeek 回应生成",
@@ -160,7 +187,10 @@ class DeepSeekCalendarParser(
                     confidence = 0.93,
                     missingFields = emptyList(),
                 ),
-            ),
+            )
+        }
+        val response = AiCalendarResponse(
+            events = events,
             warnings = listOf("使用本地 mock DeepSeek 回应。"),
         )
 

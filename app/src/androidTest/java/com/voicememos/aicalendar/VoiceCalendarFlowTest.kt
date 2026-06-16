@@ -6,7 +6,6 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
@@ -34,35 +33,35 @@ class VoiceCalendarFlowTest {
     fun mockDeepSeekFlowCreatesEventsInCalendar() {
         composeRule.assertInputActionButtonsDoNotOverlap()
         composeRule.assertMonthHeaderAlignsWithDates()
+        composeRule.onNodeWithTag("theme-toggle-button").performClick()
+        composeRule.onNodeWithTag("theme-toggle-button").performClick()
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
         composeRule.onNodeWithTag("api-key-field").assertTextContains("mock-deepseek")
-        composeRule.onNodeWithTag("theme-dark-button").performClick()
-        composeRule.onNodeWithTag("theme-light-button").performClick()
         closeSoftKeyboard()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings-save-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
 
         composeRule.onNodeWithTag("transcript-field")
-            .performTextReplacement("明天上午九点提醒我给张三打电话，下午三点开项目会")
-        composeRule.onNodeWithTag("transcript-field").assertTextContains("给张三打电话", substring = true)
+            .performTextReplacement("明天中午11点提醒我打开电脑12点提醒我打开手机")
+        composeRule.onNodeWithTag("transcript-field").assertTextContains("打开电脑", substring = true)
         closeSoftKeyboard()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("generate-button")
             .performSemanticsAction(SemanticsActions.OnClick)
 
         composeRule.waitUntilNodeExists("draft-panel")
-        composeRule.assertAnyTextDisplayed("给张三打电话")
-        composeRule.assertAnyTextExists("项目会")
+        composeRule.assertAnyTextDisplayed("打开电脑")
+        composeRule.assertAnyTextExists("打开手机")
 
         composeRule.saveAllDrafts()
 
-        composeRule.assertAnyTextDisplayed("给张三打电话")
-        composeRule.scrollEventListToText("项目会")
-        composeRule.assertAnyTextDisplayed("项目会")
+        composeRule.assertAnyTextDisplayed("打开电脑")
+        composeRule.scrollEventListToText("打开手机")
+        composeRule.assertAnyTextDisplayed("打开手机")
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
@@ -132,15 +131,7 @@ class VoiceCalendarFlowTest {
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
-        repeat(6) {
-            val saveButtons = onAllNodesWithTag("draft-save-button").fetchSemanticsNodes()
-            if (saveButtons.isEmpty()) {
-                waitUntilNodeDoesNotExist("draft-panel")
-                return
-            }
-            onAllNodesWithTag("draft-save-button")[0].performSemanticsAction(SemanticsActions.OnClick)
-            waitForIdle()
-        }
+        onNodeWithTag("draft-save-all-button").performSemanticsAction(SemanticsActions.OnClick)
         waitUntilNodeDoesNotExist("draft-panel")
     }
 

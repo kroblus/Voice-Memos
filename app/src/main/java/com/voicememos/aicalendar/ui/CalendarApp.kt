@@ -31,8 +31,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.KeyboardVoice
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Settings
@@ -41,7 +45,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -117,32 +120,8 @@ private fun CalendarWorkbench(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Header(
-                selectedDate = state.selectedDate,
-                apiKeySaved = state.apiKeySaved,
-                onToday = viewModel::selectToday,
-                onSettings = viewModel::openSettings,
-            )
-            ViewModeSelector(
-                selected = state.viewMode,
-                onSelect = viewModel::setViewMode,
-            )
-            CalendarSurface(
-                modifier = Modifier.weight(1f),
-                state = state,
-                onDateSelected = viewModel::selectDate,
-                onMarkDone = viewModel::markDone,
-                onDelete = viewModel::deleteEvent,
-            )
-            ComposerPanel(
+        bottomBar = {
+            ComposerBar(
                 state = state,
                 onTextChanged = viewModel::updateTextInput,
                 onSubmit = viewModel::parseCurrentText,
@@ -153,11 +132,54 @@ private fun CalendarWorkbench(
                         recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 18.dp)
+                .padding(top = 14.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Header(
+                selectedDate = state.selectedDate,
+                themeMode = state.themeMode,
+                apiKeySaved = state.apiKeySaved,
+                onToday = viewModel::selectToday,
+                onThemeToggle = {
+                    viewModel.setThemeMode(
+                        if (state.themeMode == AppThemeMode.DARK) AppThemeMode.LIGHT else AppThemeMode.DARK,
+                    )
+                },
+                onSettings = viewModel::openSettings,
+            )
+            ViewModeSelector(
+                selected = state.viewMode,
+                onSelect = viewModel::setViewMode,
+            )
+            CalendarSurface(
+                modifier = Modifier.weight(1f, fill = false),
+                state = state,
+                onDateSelected = viewModel::selectDate,
+                onMarkDone = viewModel::markDone,
+                onDelete = viewModel::deleteEvent,
             )
             WarningsAndErrors(state)
             DraftPanel(
                 drafts = state.draftEditors,
                 onUpdate = viewModel::updateDraft,
+                onConfirmAll = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    viewModel.confirmAllDrafts()
+                },
                 onConfirm = { draftId ->
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -177,7 +199,6 @@ private fun CalendarWorkbench(
                 onApiKeyChanged = viewModel::updateApiKeyInput,
                 onSave = viewModel::saveApiKey,
                 onClearApiKey = viewModel::clearApiKey,
-                onThemeSelected = viewModel::setThemeMode,
                 onClose = viewModel::closeSettings,
             )
         }
@@ -187,8 +208,10 @@ private fun CalendarWorkbench(
 @Composable
 private fun Header(
     selectedDate: LocalDate,
+    themeMode: AppThemeMode,
     apiKeySaved: Boolean,
     onToday: () -> Unit,
+    onThemeToggle: () -> Unit,
     onSettings: () -> Unit,
 ) {
     Row(
@@ -204,9 +227,30 @@ private fun Header(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            IconButton(onClick = onToday) {
-                Icon(Icons.Rounded.Today, contentDescription = "今天")
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = onToday,
+                modifier = Modifier.testTag("today-button"),
+            ) {
+                Icon(Icons.Rounded.Today, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("今天")
+            }
+            IconButton(
+                onClick = onThemeToggle,
+                modifier = Modifier.testTag("theme-toggle-button"),
+            ) {
+                Icon(
+                    imageVector = if (themeMode == AppThemeMode.DARK) {
+                        Icons.Rounded.LightMode
+                    } else {
+                        Icons.Rounded.DarkMode
+                    },
+                    contentDescription = if (themeMode == AppThemeMode.DARK) "切换浅色" else "切换深色",
+                )
             }
             IconButton(
                 onClick = onSettings,
@@ -256,14 +300,14 @@ private fun CalendarSurface(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 260.dp),
+            .heightIn(min = 240.dp),
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             when (state.viewMode) {
                 CalendarViewMode.MONTH -> MonthGrid(
@@ -310,9 +354,9 @@ private fun MonthGrid(
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(7),
-        modifier = Modifier.height(286.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.height(250.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         items(
             items = listOf("日", "一", "二", "三", "四", "五", "六").mapIndexed { index, label -> index to label },
@@ -333,7 +377,7 @@ private fun MonthGrid(
         }
         items(days) { date ->
             if (date == null) {
-                Spacer(modifier = Modifier.height(38.dp))
+                Spacer(modifier = Modifier.height(32.dp))
             } else {
                 DayCell(
                     date = date,
@@ -542,20 +586,22 @@ private fun EventRow(
 }
 
 @Composable
-private fun ComposerPanel(
+private fun ComposerBar(
     state: CalendarUiState,
     onTextChanged: (String) -> Unit,
     onSubmit: () -> Unit,
     onVoiceInput: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (state.isParsing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
@@ -563,13 +609,17 @@ private fun ComposerPanel(
                 onValueChange = onTextChanged,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 92.dp, max = 132.dp)
                     .testTag("transcript-field"),
-                label = { Text(if (state.isListening) "正在听" else "说一句或直接输入") },
+                shape = RoundedCornerShape(8.dp),
+                label = { Text(if (state.isListening) "正在听" else "一句话") },
+                placeholder = { Text("明天11点打开电脑，12点打开手机") },
                 minLines = 2,
+                maxLines = 4,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilledIconButton(
@@ -592,10 +642,9 @@ private fun ComposerPanel(
                 ) {
                     Icon(Icons.Rounded.KeyboardVoice, contentDescription = "语音输入")
                 }
-                Spacer(Modifier.width(8.dp))
                 FilledIconButton(
                     onClick = onSubmit,
-                    enabled = !state.isParsing,
+                    enabled = !state.isParsing && state.partialTranscript.ifBlank { state.textInput }.isNotBlank(),
                     modifier = Modifier
                         .size(48.dp)
                         .testTag("generate-button"),
@@ -625,6 +674,7 @@ private fun WarningsAndErrors(state: CalendarUiState) {
 private fun DraftPanel(
     drafts: List<DraftEditor>,
     onUpdate: (String, (DraftEditor) -> DraftEditor) -> Unit,
+    onConfirmAll: () -> Unit,
     onConfirm: (String) -> Unit,
     onDiscard: (String) -> Unit,
     onClear: () -> Unit,
@@ -647,16 +697,43 @@ private fun DraftPanel(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("待确认", style = MaterialTheme.typography.titleMedium)
-                    TextButton(onClick = onClear) { Text("清空") }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("待确认 ${drafts.size} 项", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            drafts.joinToString("  ") { it.title.ifBlank { "未命名" } },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = onClear) { Text("清空") }
+                        Spacer(Modifier.width(4.dp))
+                        Button(
+                            onClick = onConfirmAll,
+                            enabled = drafts.any { it.title.isNotBlank() && it.startLocal.isNotBlank() },
+                            modifier = Modifier.testTag("draft-save-all-button"),
+                        ) {
+                            Icon(Icons.Rounded.Save, contentDescription = null)
+                            Text("全部保存")
+                        }
+                    }
                 }
-                drafts.forEach { draft ->
-                    DraftEditorCard(
-                        draft = draft,
-                        onUpdate = { transform -> onUpdate(draft.draftId, transform) },
-                        onConfirm = { onConfirm(draft.draftId) },
-                        onDiscard = { onDiscard(draft.draftId) },
-                    )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(drafts, key = { it.draftId }) { draft ->
+                        DraftEditorCard(
+                            draft = draft,
+                            onUpdate = { transform -> onUpdate(draft.draftId, transform) },
+                            onConfirm = { onConfirm(draft.draftId) },
+                            onDiscard = { onDiscard(draft.draftId) },
+                        )
+                    }
                 }
             }
         }
@@ -670,75 +747,138 @@ private fun DraftEditorCard(
     onConfirm: () -> Unit,
     onDiscard: () -> Unit,
 ) {
-    Column(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.background)
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .testTag("draft-item"),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.background,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                if (draft.missingFields.isEmpty()) Icons.Rounded.RadioButtonUnchecked else Icons.Rounded.Close,
-                contentDescription = null,
-                tint = if (draft.missingFields.isEmpty()) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "置信度 ${(draft.aiConfidence * 100).toInt()}%",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        OutlinedTextField(
-            value = draft.title,
-            onValueChange = { value -> onUpdate { it.copy(title = value) } },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("标题") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = draft.startLocal,
-            onValueChange = { value -> onUpdate { it.copy(startLocal = value) } },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(if (draft.allDay) "日期 yyyy-MM-dd" else "开始 yyyy-MM-dd HH:mm") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = draft.endLocal,
-            onValueChange = { value -> onUpdate { it.copy(endLocal = value) } },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(if (draft.allDay) "结束日期" else "结束时间") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = draft.reminderMinutes,
-            onValueChange = { value -> onUpdate { it.copy(reminderMinutes = value) } },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("提醒分钟，逗号分隔") },
-            singleLine = true,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = onDiscard) {
-                Icon(Icons.Rounded.Close, contentDescription = null)
-                Text("丢弃")
-            }
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = onConfirm,
-                modifier = Modifier.testTag("draft-save-button"),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(Icons.Rounded.Save, contentDescription = null)
-                Text("保存")
+                Icon(
+                    if (draft.missingFields.isEmpty()) Icons.Rounded.RadioButtonUnchecked else Icons.Rounded.Close,
+                    contentDescription = null,
+                    tint = if (draft.missingFields.isEmpty()) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        draft.title.ifBlank { "未命名任务" },
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "${draft.timeSummary()}  ·  ${draft.reminderSummary()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    "${(draft.aiConfidence * 100).toInt()}%",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = { onUpdate { it.copy(expanded = !it.expanded) } },
+                    modifier = Modifier.testTag("draft-edit-button"),
+                ) {
+                    Icon(
+                        if (draft.expanded) Icons.Rounded.ExpandLess else Icons.Rounded.Edit,
+                        contentDescription = if (draft.expanded) "收起编辑" else "编辑",
+                    )
+                }
+                IconButton(onClick = onDiscard) {
+                    Icon(Icons.Rounded.Delete, contentDescription = "删除草稿")
+                }
+                FilledIconButton(
+                    onClick = onConfirm,
+                    enabled = draft.title.isNotBlank() && draft.startLocal.isNotBlank(),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .testTag("draft-save-button"),
+                ) {
+                    Icon(Icons.Rounded.Save, contentDescription = "保存")
+                }
+            }
+
+            AnimatedVisibility(draft.expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = draft.title,
+                        onValueChange = { value -> onUpdate { it.copy(title = value) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text("标题") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = draft.startLocal,
+                        onValueChange = { value -> onUpdate { it.copy(startLocal = value) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text(if (draft.allDay) "日期 yyyy-MM-dd" else "开始 yyyy-MM-dd HH:mm") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = draft.endLocal,
+                        onValueChange = { value -> onUpdate { it.copy(endLocal = value) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text(if (draft.allDay) "结束日期" else "结束时间") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = draft.reminderMinutes,
+                        onValueChange = { value -> onUpdate { it.copy(reminderMinutes = value) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text("提醒分钟，逗号分隔") },
+                        singleLine = true,
+                    )
+                }
             }
         }
+    }
+}
+
+private fun DraftEditor.timeSummary(): String =
+    when {
+        startLocal.isBlank() -> "缺少时间"
+        endLocal.isBlank() -> startLocal.replace("T", " ")
+        else -> "${startLocal.replace("T", " ")} - ${endLocal.replace("T", " ")}"
+    }
+
+private fun DraftEditor.reminderSummary(): String {
+    val minutes = reminderMinutes.split(",")
+        .mapNotNull { it.trim().toIntOrNull() }
+        .filter { it >= 0 }
+        .ifEmpty { listOf(10) }
+        .plus(0)
+        .distinct()
+        .sorted()
+    return minutes.joinToString(" / ") { minute ->
+        if (minute == 0) "到点" else "提前${minute}分钟"
     }
 }
 
@@ -748,7 +888,6 @@ private fun SettingsSheet(
     onApiKeyChanged: (String) -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
-    onThemeSelected: (AppThemeMode) -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -771,18 +910,6 @@ private fun SettingsSheet(
             label = { Text("DeepSeek API key") },
             singleLine = true,
         )
-        HorizontalDivider()
-        Text("主题", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AppThemeMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = state.themeMode == mode,
-                    onClick = { onThemeSelected(mode) },
-                    label = { Text(mode.label) },
-                    modifier = Modifier.testTag("theme-${mode.name.lowercase(Locale.ROOT)}-button"),
-                )
-            }
-        }
         Text("默认时长 30 分钟；事件开始时通知，也可保留提前提醒。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(
             modifier = Modifier.fillMaxWidth(),

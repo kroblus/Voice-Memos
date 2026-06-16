@@ -49,6 +49,8 @@ class DeepSeekCalendarParserTest {
         assertTrue(requestBody.contains(""""response_format":{"type":"json_object"}"""))
         assertTrue(requestBody.contains(""""max_tokens":1200"""))
         assertTrue(requestBody.contains(""""stream":false"""))
+        assertTrue(requestBody.contains("明天中午11点提醒我打开电脑12点提醒我打开手机"))
+        assertTrue(requestBody.contains("Split this transcript into as many event objects"))
     }
 
     @Test

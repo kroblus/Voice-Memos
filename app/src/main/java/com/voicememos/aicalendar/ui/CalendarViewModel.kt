@@ -191,6 +191,37 @@ class CalendarViewModel(
         }
     }
 
+    fun confirmAllDrafts() {
+        val editors = _uiState.value.draftEditors
+        val preparedDrafts = editors.map { editor -> editor to editor.toDraft(zoneId) }
+        val creatableDrafts = preparedDrafts.filter { (_, draft) -> draft.canCreate }
+        if (creatableDrafts.isEmpty()) {
+            showError("有草稿缺少标题或时间，请先编辑。")
+            return
+        }
+
+        viewModelScope.launch {
+            val savedEvents = creatableDrafts.map { (_, draft) ->
+                calendarRepository.createFromDraft(draft).also(reminderScheduler::schedule)
+            }
+            val savedDraftIds = creatableDrafts.map { (editor, _) -> editor.draftId }.toSet()
+            _uiState.update { state ->
+                val remainingDrafts = state.draftEditors.filterNot { it.draftId in savedDraftIds }
+                state.copy(
+                    selectedDate = savedEvents.first().startAt.atZone(zoneId).toLocalDate(),
+                    draftEditors = remainingDrafts,
+                    textInput = if (remainingDrafts.isEmpty()) "" else state.textInput,
+                    warnings = if (remainingDrafts.isEmpty()) emptyList() else state.warnings,
+                    errorMessage = if (remainingDrafts.isEmpty()) {
+                        null
+                    } else {
+                        "还有 ${remainingDrafts.size} 个草稿缺少标题或时间。"
+                    },
+                )
+            }
+        }
+    }
+
     fun markDone(eventId: String) {
         _uiState.value.events.firstOrNull { it.id == eventId }?.let { event ->
             reminderScheduler.cancel(event.id, event.reminderMinutes)

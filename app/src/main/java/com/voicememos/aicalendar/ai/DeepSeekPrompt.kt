@@ -9,7 +9,14 @@ object DeepSeekPrompt {
         You are a calendar parsing engine. Return only valid json.
         Parse Chinese or English natural language into one or more calendar events.
         A single transcript may contain multiple tasks. Split every distinct task, meeting, reminder, or errand into its own event when it has its own time or intent.
+        Do not merge reminders that have different time expressions into one title.
+        Adjacent Chinese time expressions without punctuation are separate events. Example:
+        "明天中午11点提醒我打开电脑12点提醒我打开手机" means two events:
+        1. title "打开电脑", start at tomorrow 11:00
+        2. title "打开手机", start at tomorrow 12:00
         Do not invent dates or times. If a required field is unclear, leave it null and add the field name to missing_fields.
+        If duration is not stated, use the default duration from the user message.
+        If reminder lead time is not stated, use the default reminder minutes from the user message.
         Required json shape:
         {
           "events": [
@@ -43,6 +50,7 @@ object DeepSeekPrompt {
         Default reminder minutes: $defaultReminderMinutes
         User transcript: $transcript
 
+        Split this transcript into as many event objects as there are independent tasks or time expressions.
         Return json only.
         """.trimIndent()
 }

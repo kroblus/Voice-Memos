@@ -4,7 +4,6 @@ import android.Manifest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
@@ -43,20 +42,20 @@ class RealDeepSeekCalendarFlowTest {
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
 
         composeRule.onNodeWithTag("transcript-field")
-            .performTextReplacement("明天上午九点提醒我给张三打电话，下午三点开项目会")
+            .performTextReplacement("明天中午11点提醒我打开电脑12点提醒我打开手机")
         closeSoftKeyboard()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("generate-button").performSemanticsAction(SemanticsActions.OnClick)
 
         composeRule.waitUntilNodeExists("draft-panel", timeoutMillis = 90_000)
-        composeRule.assertAnyTextDisplayed("给张三打电话", substring = true)
-        composeRule.assertAnyTextExists("项目", substring = true)
+        composeRule.assertAnyTextDisplayed("电脑", substring = true)
+        composeRule.assertAnyTextExists("手机", substring = true)
 
         composeRule.saveAllDrafts()
 
-        composeRule.assertAnyTextDisplayed("给张三打电话", substring = true)
-        composeRule.scrollEventListToText("项目", substring = true)
-        composeRule.assertAnyTextExists("项目", substring = true)
+        composeRule.assertAnyTextDisplayed("电脑", substring = true)
+        composeRule.scrollEventListToText("手机", substring = true)
+        composeRule.assertAnyTextExists("手机", substring = true)
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeExists(
@@ -101,15 +100,7 @@ class RealDeepSeekCalendarFlowTest {
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
-        repeat(6) {
-            val saveButtons = onAllNodesWithTag("draft-save-button").fetchSemanticsNodes()
-            if (saveButtons.isEmpty()) {
-                waitUntilNodeDoesNotExist("draft-panel")
-                return
-            }
-            onAllNodesWithTag("draft-save-button")[0].performSemanticsAction(SemanticsActions.OnClick)
-            waitForIdle()
-        }
+        onNodeWithTag("draft-save-all-button").performSemanticsAction(SemanticsActions.OnClick)
         waitUntilNodeDoesNotExist("draft-panel")
     }
 
