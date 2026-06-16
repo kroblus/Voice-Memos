@@ -14,6 +14,7 @@ import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -36,6 +37,16 @@ class CalendarViewModel(
                 _uiState.update { it.copy(events = events) }
             }
         }
+        viewModelScope.launch {
+            settingsRepository.observeThemeMode()
+                .distinctUntilChanged()
+                .collect { value ->
+                    _uiState.update {
+                        it.copy(themeMode = runCatching { AppThemeMode.valueOf(value.orEmpty()) }
+                            .getOrDefault(AppThemeMode.LIGHT))
+                    }
+                }
+        }
     }
 
     fun selectDate(date: LocalDate) {
@@ -48,6 +59,13 @@ class CalendarViewModel(
 
     fun setViewMode(mode: CalendarViewMode) {
         _uiState.update { it.copy(viewMode = mode) }
+    }
+
+    fun setThemeMode(mode: AppThemeMode) {
+        _uiState.update { it.copy(themeMode = mode) }
+        viewModelScope.launch {
+            settingsRepository.setThemeMode(mode.name)
+        }
     }
 
     fun updateTextInput(value: String) {

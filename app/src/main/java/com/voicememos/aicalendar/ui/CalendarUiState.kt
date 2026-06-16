@@ -19,6 +19,7 @@ enum class CalendarViewMode(val label: String) {
 data class CalendarUiState(
     val selectedDate: LocalDate = LocalDate.now(),
     val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
+    val themeMode: AppThemeMode = AppThemeMode.LIGHT,
     val events: List<CalendarEvent> = emptyList(),
     val textInput: String = "",
     val partialTranscript: String = "",
@@ -59,7 +60,10 @@ data class DraftEditor(
             reminderMinutes = reminderMinutes.split(",")
                 .mapNotNull { it.trim().toIntOrNull() }
                 .filter { it >= 0 }
-                .ifEmpty { listOf(10) },
+                .ifEmpty { listOf(10) }
+                .plus(0)
+                .distinct()
+                .sorted(),
             sourceTranscript = sourceTranscript,
             aiConfidence = aiConfidence,
             missingFields = missing.sorted(),
@@ -110,4 +114,3 @@ private fun parseDateTime(value: String, zoneId: ZoneId): Instant? {
 }
 
 private val EditorDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-

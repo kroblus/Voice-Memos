@@ -7,6 +7,12 @@ class SettingsRepository(
 ) {
     fun observeDefaultReminderMinutes(): Flow<String?> = dao.observeValue(DEFAULT_REMINDER_MINUTES)
 
+    fun observeThemeMode(): Flow<String?> = dao.observeValue(THEME_MODE)
+
+    suspend fun setThemeMode(value: String) {
+        dao.set(AppSettingEntity(THEME_MODE, value))
+    }
+
     suspend fun setDefaultReminderMinutes(value: Int) {
         dao.set(AppSettingEntity(DEFAULT_REMINDER_MINUTES, value.coerceAtLeast(0).toString()))
     }
@@ -24,6 +30,6 @@ class SettingsRepository(
     private companion object {
         const val DEFAULT_REMINDER_MINUTES = "default_reminder_minutes"
         const val DEFAULT_DURATION_MINUTES = "default_duration_minutes"
+        const val THEME_MODE = "theme_mode"
     }
 }
-

@@ -39,6 +39,7 @@ object AiResponseMapper {
                 allDay = event.allDay,
                 reminderMinutes = event.reminderMinutes
                     .ifEmpty { listOf(defaultReminderMinutes) }
+                    .plus(0)
                     .filter { it >= 0 }
                     .distinct()
                     .sorted(),

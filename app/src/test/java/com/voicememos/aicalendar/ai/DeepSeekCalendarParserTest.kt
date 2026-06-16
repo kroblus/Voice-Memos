@@ -38,7 +38,7 @@ class DeepSeekCalendarParserTest {
 
         assertEquals(1, result.events.size)
         assertEquals("给张三打电话", result.events.single().title)
-        assertEquals(listOf(10), result.events.single().reminderMinutes)
+        assertEquals(listOf(0, 10), result.events.single().reminderMinutes)
         assertTrue(result.events.single().canCreate)
         assertTrue(result.needsConfirmation)
 

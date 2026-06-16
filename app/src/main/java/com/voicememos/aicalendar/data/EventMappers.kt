@@ -40,6 +40,7 @@ fun DraftCalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEnti
 
 fun List<Int>.toReminderCsv(): String =
     asSequence()
+        .plus(0)
         .filter { it >= 0 }
         .distinct()
         .sorted()
@@ -51,4 +52,3 @@ fun String.toReminderMinutes(): List<Int> =
         .filter { it >= 0 }
         .distinct()
         .sorted()
-

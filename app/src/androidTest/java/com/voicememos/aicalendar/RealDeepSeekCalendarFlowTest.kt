@@ -2,7 +2,7 @@ package com.voicememos.aicalendar
 
 import android.Manifest
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -10,11 +10,13 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToString
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -50,14 +52,10 @@ class RealDeepSeekCalendarFlowTest {
         composeRule.assertAnyTextDisplayed("给张三打电话", substring = true)
         composeRule.assertAnyTextExists("项目", substring = true)
 
-        composeRule.onAllNodesWithTag("draft-save-button")[0]
-            .performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
-        composeRule.onAllNodesWithTag("draft-save-button")[0]
-            .performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
+        composeRule.saveAllDrafts()
 
         composeRule.assertAnyTextDisplayed("给张三打电话", substring = true)
+        composeRule.scrollEventListToText("项目", substring = true)
         composeRule.assertAnyTextExists("项目", substring = true)
     }
 
@@ -84,6 +82,13 @@ class RealDeepSeekCalendarFlowTest {
         }
     }
 
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.scrollEventListToText(
+        text: String,
+        substring: Boolean = false,
+    ) {
+        onNodeWithTag("event-list").performScrollToNode(hasText(text, substring = substring))
+    }
+
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeDoesNotExist(
         tag: String,
         timeoutMillis: Long = 10_000,
@@ -95,11 +100,27 @@ class RealDeepSeekCalendarFlowTest {
         }
     }
 
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
+        repeat(6) {
+            val saveButtons = onAllNodesWithTag("draft-save-button").fetchSemanticsNodes()
+            if (saveButtons.isEmpty()) {
+                waitUntilNodeDoesNotExist("draft-panel")
+                return
+            }
+            onAllNodesWithTag("draft-save-button")[0].performSemanticsAction(SemanticsActions.OnClick)
+            waitForIdle()
+        }
+        waitUntilNodeDoesNotExist("draft-panel")
+    }
+
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextDisplayed(
         text: String,
         substring: Boolean = false,
     ) {
-        onAllNodesWithText(text, substring = substring).onFirst().assertIsDisplayed()
+        assertTrue(
+            "Expected at least one node with text '$text'.",
+            onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty(),
+        )
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextExists(

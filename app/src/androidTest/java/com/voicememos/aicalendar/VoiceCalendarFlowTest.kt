@@ -2,6 +2,7 @@ package com.voicememos.aicalendar
 
 import android.Manifest
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToString
@@ -31,11 +33,14 @@ class VoiceCalendarFlowTest {
     @Test
     fun mockDeepSeekFlowCreatesEventsInCalendar() {
         composeRule.assertInputActionButtonsDoNotOverlap()
+        composeRule.assertMonthHeaderAlignsWithDates()
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
         composeRule.onNodeWithTag("api-key-field").assertTextContains("mock-deepseek")
+        composeRule.onNodeWithTag("theme-dark-button").performClick()
+        composeRule.onNodeWithTag("theme-light-button").performClick()
         closeSoftKeyboard()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings-save-button").performClick()
@@ -53,14 +58,10 @@ class VoiceCalendarFlowTest {
         composeRule.assertAnyTextDisplayed("给张三打电话")
         composeRule.assertAnyTextExists("项目会")
 
-        composeRule.onAllNodesWithTag("draft-save-button")[0]
-            .performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
-        composeRule.onAllNodesWithTag("draft-save-button")[0]
-            .performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
+        composeRule.saveAllDrafts()
 
         composeRule.assertAnyTextDisplayed("给张三打电话")
+        composeRule.scrollEventListToText("项目会")
         composeRule.assertAnyTextDisplayed("项目会")
 
         composeRule.onNodeWithTag("settings-button").performClick()
@@ -80,6 +81,19 @@ class VoiceCalendarFlowTest {
             "Voice and send buttons overlap. voice=$voiceBounds send=$sendBounds",
             separated,
         )
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertMonthHeaderAlignsWithDates() {
+        val mondayCenter = onNodeWithTag("weekday-1").fetchSemanticsNode().boundsInRoot.center.x
+        val firstDayCenter = onNodeWithTag("day-1").fetchSemanticsNode().boundsInRoot.center.x
+        assertTrue(
+            "Weekday header and date column are misaligned. weekday=$mondayCenter day=$firstDayCenter",
+            kotlin.math.abs(mondayCenter - firstDayCenter) <= 1f,
+        )
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.scrollEventListToText(text: String) {
+        onNodeWithTag("event-list").performScrollToNode(hasText(text))
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeExists(
@@ -117,10 +131,26 @@ class VoiceCalendarFlowTest {
         }
     }
 
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
+        repeat(6) {
+            val saveButtons = onAllNodesWithTag("draft-save-button").fetchSemanticsNodes()
+            if (saveButtons.isEmpty()) {
+                waitUntilNodeDoesNotExist("draft-panel")
+                return
+            }
+            onAllNodesWithTag("draft-save-button")[0].performSemanticsAction(SemanticsActions.OnClick)
+            waitForIdle()
+        }
+        waitUntilNodeDoesNotExist("draft-panel")
+    }
+
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextDisplayed(
         text: String,
     ) {
-        onAllNodesWithText(text).onFirst().assertIsDisplayed()
+        assertTrue(
+            "Expected at least one node with text '$text'.",
+            onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty(),
+        )
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextExists(

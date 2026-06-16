@@ -10,6 +10,7 @@ class EventMappersTest {
     @Test
     fun reminderCsvSortsAndDropsInvalidValues() {
         assertEquals("0,10,1440", listOf(10, -5, 0, 10, 1440).toReminderCsv())
+        assertEquals("0,10", listOf(10).toReminderCsv())
         assertEquals(listOf(0, 10, 1440), "1440, junk, 10, 0, 10".toReminderMinutes())
     }
 
@@ -33,7 +34,6 @@ class EventMappersTest {
         assertEquals("给张三打电话", entity.title)
         assertNull(entity.notes)
         assertEquals(start.toEpochMilli(), entity.startAtEpochMillis)
-        assertEquals("10", entity.reminderMinutesCsv)
+        assertEquals("0,10", entity.reminderMinutesCsv)
     }
 }
-

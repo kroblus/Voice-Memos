@@ -35,8 +35,8 @@ class AiResponseMapperTest {
         )
 
         assertEquals(2, result.events.size)
-        assertEquals(listOf(10), result.events[0].reminderMinutes)
-        assertEquals(listOf(10, 20), result.events[1].reminderMinutes)
+        assertEquals(listOf(0, 10), result.events[0].reminderMinutes)
+        assertEquals(listOf(0, 10, 20), result.events[1].reminderMinutes)
         assertTrue(result.events.all { it.canCreate })
         assertTrue(result.needsConfirmation)
     }
@@ -64,4 +64,3 @@ class AiResponseMapperTest {
         assertTrue(result.needsConfirmation)
     }
 }
-

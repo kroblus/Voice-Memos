@@ -10,6 +10,7 @@
 - DeepSeek API key 只保存在本机加密存储中
 - 语音输入使用 Android SpeechRecognizer
 - 本地事件使用 Room 保存
+- 每个事件默认在开始时间弹出本机通知，也可保留提前提醒
 
 ## 常用命令
 
@@ -39,5 +40,6 @@ app/build/outputs/apk/debug/app-debug.apk
 ```
 
 本项目的 release 包使用本机 debug signing config 签名，适合内测安装；正式发布前应替换为正式签名。
+Android 13+ 首次保存事件时需要允许通知权限；Android 12+ 如果系统限制精确提醒，应用会退化为近似提醒。
 
 如果本机缺少 Android SDK，请先用 Android Studio 安装 SDK Platform 36、Build Tools 35.0.0 和 Platform Tools。

@@ -70,12 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.speech.SpeechInputController
-import com.voicememos.aicalendar.ui.theme.Clay
-import com.voicememos.aicalendar.ui.theme.Graphite
-import com.voicememos.aicalendar.ui.theme.InkTeal
-import com.voicememos.aicalendar.ui.theme.Ochre
-import com.voicememos.aicalendar.ui.theme.Paper
-import com.voicememos.aicalendar.ui.theme.Porcelain
+import com.voicememos.aicalendar.ui.theme.ShengliTheme
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -86,6 +81,17 @@ import java.util.Locale
 @Composable
 fun CalendarApp(viewModel: CalendarViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    ShengliTheme(darkTheme = state.themeMode == AppThemeMode.DARK) {
+        CalendarWorkbench(viewModel = viewModel, state = state)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CalendarWorkbench(
+    viewModel: CalendarViewModel,
+    state: CalendarUiState,
+) {
     val context = LocalContext.current
     val speechController = remember {
         SpeechInputController(
@@ -110,7 +116,7 @@ fun CalendarApp(viewModel: CalendarViewModel) {
     ) { /* The receiver checks the final permission state before showing reminders. */ }
 
     Scaffold(
-        containerColor = Paper,
+        containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Column(
             modifier = Modifier
@@ -171,6 +177,7 @@ fun CalendarApp(viewModel: CalendarViewModel) {
                 onApiKeyChanged = viewModel::updateApiKeyInput,
                 onSave = viewModel::saveApiKey,
                 onClearApiKey = viewModel::clearApiKey,
+                onThemeSelected = viewModel::setThemeMode,
                 onClose = viewModel::closeSettings,
             )
         }
@@ -194,7 +201,7 @@ private fun Header(
             Text(
                 selectedDate.format(DateTimeFormatter.ofPattern("yyyy年M月d日 E", Locale.SIMPLIFIED_CHINESE)),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Graphite,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -213,7 +220,7 @@ private fun Header(
                                 .align(Alignment.TopEnd)
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(Clay),
+                                .background(MaterialTheme.colorScheme.secondary),
                         )
                     }
                 }
@@ -251,7 +258,7 @@ private fun CalendarSurface(
             .fillMaxWidth()
             .heightIn(min = 260.dp),
         shape = RoundedCornerShape(8.dp),
-        color = Porcelain,
+        color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
     ) {
         Column(
@@ -301,37 +308,39 @@ private fun MonthGrid(
     }
     val eventDates = events.map { it.startAt.atZone(ZoneId.systemDefault()).toLocalDate() }.toSet()
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            listOf("日", "一", "二", "三", "四", "五", "六").forEach {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(7),
+        modifier = Modifier.height(286.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(
+            items = listOf("日", "一", "二", "三", "四", "五", "六").mapIndexed { index, label -> index to label },
+            key = { it.first },
+        ) { (index, label) ->
+            Box(
+                modifier = Modifier
+                    .height(34.dp)
+                    .testTag("weekday-$index"),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
-                    text = it,
-                    modifier = Modifier.weight(1f),
+                    text = label,
                     style = MaterialTheme.typography.labelLarge,
-                    color = Graphite,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(7),
-            modifier = Modifier.height(228.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(days) { date ->
-                if (date == null) {
-                    Spacer(modifier = Modifier.height(32.dp))
-                } else {
-                    DayCell(
-                        date = date,
-                        selected = date == selectedDate,
-                        hasEvent = date in eventDates,
-                        onClick = { onDateSelected(date) },
-                    )
-                }
+        items(days) { date ->
+            if (date == null) {
+                Spacer(modifier = Modifier.height(38.dp))
+            } else {
+                DayCell(
+                    date = date,
+                    selected = date == selectedDate,
+                    hasEvent = date in eventDates,
+                    onClick = { onDateSelected(date) },
+                )
             }
         }
     }
@@ -348,23 +357,28 @@ private fun DayCell(
     Column(
         modifier = Modifier
             .height(32.dp)
+            .testTag("day-${date.dayOfMonth}")
             .clip(shape)
-            .background(if (selected) InkTeal else Color.Transparent)
-            .border(1.dp, if (date == LocalDate.now()) Ochre else Color.Transparent, shape)
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+            .border(
+                1.dp,
+                if (date == LocalDate.now()) MaterialTheme.colorScheme.tertiary else Color.Transparent,
+                shape,
+            )
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
             text = date.dayOfMonth.toString(),
-            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.labelLarge,
         )
         Box(
             modifier = Modifier
                 .size(4.dp)
                 .clip(CircleShape)
-                .background(if (hasEvent) Clay else Color.Transparent),
+                .background(if (hasEvent) MaterialTheme.colorScheme.secondary else Color.Transparent),
         )
     }
 }
@@ -386,19 +400,33 @@ private fun WeekStrip(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (date == selectedDate) InkTeal else Paper)
+                    .background(
+                        if (date == selectedDate) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.background
+                        },
+                    )
                     .clickable { onDateSelected(date) }
                     .padding(vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, Locale.SIMPLIFIED_CHINESE),
-                    color = if (date == selectedDate) Color.White else Graphite,
+                    color = if (date == selectedDate) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
                     date.dayOfMonth.toString(),
-                    color = if (date == selectedDate) Color.White else MaterialTheme.colorScheme.onSurface,
+                    color = if (date == selectedDate) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                     fontWeight = FontWeight.Bold,
                 )
                 if (hasEvent) {
@@ -407,7 +435,13 @@ private fun WeekStrip(
                         modifier = Modifier
                             .size(5.dp)
                             .clip(CircleShape)
-                            .background(if (date == selectedDate) Color.White else Clay),
+                            .background(
+                                if (date == selectedDate) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme.secondary
+                                },
+                            ),
                     )
                 }
             }
@@ -441,12 +475,15 @@ private fun EventList(
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text("今天还很清爽", color = Graphite)
+            Text("今天还很清爽", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(
+        modifier = Modifier.testTag("event-list"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         items(visible, key = { it.id }) { event ->
             EventRow(event = event, onMarkDone = onMarkDone, onDelete = onDelete)
         }
@@ -464,7 +501,7 @@ private fun EventRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(Paper)
+            .background(MaterialTheme.colorScheme.background)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -474,7 +511,13 @@ private fun EventRow(
                 .width(4.dp)
                 .height(42.dp)
                 .clip(CircleShape)
-                .background(if (event.status == EventStatus.DONE) Graphite else InkTeal),
+                .background(
+                    if (event.status == EventStatus.DONE) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                ),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -485,7 +528,7 @@ private fun EventRow(
             )
             Text(
                 event.startAt.atZone(zone).format(DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE)),
-                color = Graphite,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -508,7 +551,7 @@ private fun ComposerPanel(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        color = Porcelain,
+        color = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -535,8 +578,16 @@ private fun ComposerPanel(
                         .size(48.dp)
                         .testTag("voice-input-button"),
                     colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = if (state.isListening) Clay else InkTeal,
-                        contentColor = Color.White,
+                        containerColor = if (state.isListening) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        contentColor = if (state.isListening) {
+                            MaterialTheme.colorScheme.onSecondary
+                        } else {
+                            MaterialTheme.colorScheme.onPrimary
+                        },
                     ),
                 ) {
                     Icon(Icons.Rounded.KeyboardVoice, contentDescription = "语音输入")
@@ -561,10 +612,10 @@ private fun WarningsAndErrors(state: CalendarUiState) {
     AnimatedVisibility(state.errorMessage != null || state.warnings.isNotEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             state.errorMessage?.let {
-                Text(it, color = Clay, style = MaterialTheme.typography.bodyMedium)
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
             state.warnings.forEach {
-                Text(it, color = Ochre, style = MaterialTheme.typography.bodyMedium)
+                Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -584,7 +635,7 @@ private fun DraftPanel(
                 .fillMaxWidth()
                 .testTag("draft-panel"),
             shape = RoundedCornerShape(8.dp),
-            color = Porcelain,
+            color = MaterialTheme.colorScheme.surface,
             tonalElevation = 2.dp,
         ) {
             Column(
@@ -623,7 +674,7 @@ private fun DraftEditorCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(Paper)
+            .background(MaterialTheme.colorScheme.background)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -631,10 +682,17 @@ private fun DraftEditorCard(
             Icon(
                 if (draft.missingFields.isEmpty()) Icons.Rounded.RadioButtonUnchecked else Icons.Rounded.Close,
                 contentDescription = null,
-                tint = if (draft.missingFields.isEmpty()) InkTeal else Clay,
+                tint = if (draft.missingFields.isEmpty()) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
             )
             Spacer(Modifier.width(8.dp))
-            Text("置信度 ${(draft.aiConfidence * 100).toInt()}%", color = Graphite)
+            Text(
+                "置信度 ${(draft.aiConfidence * 100).toInt()}%",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         OutlinedTextField(
             value = draft.title,
@@ -690,6 +748,7 @@ private fun SettingsSheet(
     onApiKeyChanged: (String) -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
+    onThemeSelected: (AppThemeMode) -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -701,7 +760,7 @@ private fun SettingsSheet(
         Text("设置", style = MaterialTheme.typography.headlineSmall)
         Text(
             if (state.apiKeySaved) "DeepSeek API key 已保存在本机。" else "保存 DeepSeek API key 后即可生成日程。",
-            color = Graphite,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         OutlinedTextField(
             value = state.apiKeyInput,
@@ -713,7 +772,18 @@ private fun SettingsSheet(
             singleLine = true,
         )
         HorizontalDivider()
-        Text("默认时长 30 分钟，默认提醒 10 分钟。", color = Graphite)
+        Text("主题", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AppThemeMode.entries.forEach { mode ->
+                FilterChip(
+                    selected = state.themeMode == mode,
+                    onClick = { onThemeSelected(mode) },
+                    label = { Text(mode.label) },
+                    modifier = Modifier.testTag("theme-${mode.name.lowercase(Locale.ROOT)}-button"),
+                )
+            }
+        }
+        Text("默认时长 30 分钟；事件开始时通知，也可保留提前提醒。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
