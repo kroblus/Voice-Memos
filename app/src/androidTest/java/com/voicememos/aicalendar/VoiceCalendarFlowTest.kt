@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
@@ -100,6 +101,36 @@ class VoiceCalendarFlowTest {
                 .countByTitle("喝水")
         }
         assertTrue("Expected at least 7 repeated events, found $savedCount", savedCount >= 7)
+    }
+
+    @Test
+    fun dayTimelineAndExportControlsAreAvailable() {
+        composeRule.onNodeWithTag("settings-button").performClick()
+        composeRule.waitUntilNodeExists("api-key-field")
+        composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
+        closeSoftKeyboard()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings-save-button").performClick()
+        composeRule.waitUntilNodeDoesNotExist("api-key-field")
+
+        composeRule.onNodeWithTag("transcript-field")
+            .performTextReplacement("明天中午11点提醒我打开电脑")
+        closeSoftKeyboard()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("generate-button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+
+        composeRule.waitUntilNodeExists("draft-panel")
+        composeRule.saveAllDrafts()
+
+        composeRule.onNodeWithTag("view-mode-day").performClick()
+        composeRule.onNodeWithTag("day-next-event-banner").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("day-timeline-row").onFirst().assertIsDisplayed()
+
+        composeRule.onNodeWithTag("settings-button").performClick()
+        composeRule.waitUntilNodeExists("api-key-field")
+        composeRule.onNodeWithTag("settings-export-json-button").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-export-ics-button").assertIsDisplayed()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertInputActionButtonsDoNotOverlap() {

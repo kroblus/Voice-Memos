@@ -81,6 +81,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.voicememos.aicalendar.data.exportEventsIcs
+import com.voicememos.aicalendar.data.exportEventsJson
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.domain.RepeatFrequency
@@ -212,17 +214,11 @@ private fun CalendarWorkbench(
                 onApiKeyChanged = viewModel::updateApiKeyInput,
                 onDefaultReminderChanged = viewModel::updateDefaultReminderMinutesInput,
                 onDefaultDurationChanged = viewModel::updateDefaultDurationMinutesInput,
-                onExportEvents = {
-                    if (state.events.isEmpty()) {
-                        viewModel.showError("暂无可导出的日程。")
-                    } else {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "application/json"
-                            putExtra(Intent.EXTRA_SUBJECT, "声历日程备份")
-                            putExtra(Intent.EXTRA_TEXT, exportEventsJson(state.events))
-                        }
-                        context.startActivity(Intent.createChooser(intent, "导出日程"))
-                    }
+                onExportJson = {
+                    shareEvents(context, state.events, CalendarExportFormat.JSON, viewModel::showError)
+                },
+                onExportIcs = {
+                    shareEvents(context, state.events, CalendarExportFormat.ICS, viewModel::showError)
                 },
                 onSave = viewModel::saveApiKey,
                 onClearApiKey = viewModel::clearApiKey,
@@ -344,6 +340,7 @@ private fun ViewModeSelector(
             FilterChip(
                 selected = selected == mode,
                 onClick = { onSelect(mode) },
+                modifier = Modifier.testTag("view-mode-${mode.name.lowercase()}"),
                 label = { Text(mode.label) },
             )
         }
@@ -593,7 +590,9 @@ private fun NextEventBanner(
         ?: return
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("day-next-event-banner"),
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.background,
     ) {
@@ -689,8 +688,11 @@ private fun EventList(
                     event.title.contains(query, ignoreCase = true) ||
                     event.notes.orEmpty().contains(query, ignoreCase = true)
             }
+            .sortedBy { it.startAt }
             .take(50)
-        else -> events.filter { it.startAt.atZone(zone).toLocalDate() == selectedDate }
+        else -> events
+            .filter { it.startAt.atZone(zone).toLocalDate() == selectedDate }
+            .sortedBy { it.startAt }
     }
     if (visible.isEmpty()) {
         Box(
@@ -700,6 +702,12 @@ private fun EventList(
             Text("今天还很清爽", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
+    }
+
+    val nextEventId = if (mode == CalendarViewMode.DAY) {
+        visible.nextEventId(selectedDate, zone)
+    } else {
+        null
     }
 
     LazyColumn(
@@ -724,6 +732,16 @@ private fun EventList(
                     )
                 }
             }
+        } else if (mode == CalendarViewMode.DAY) {
+            items(visible, key = { it.id }) { event ->
+                TimelineEventRow(
+                    event = event,
+                    highlighted = event.id == nextEventId,
+                    onMarkDone = onMarkDone,
+                    onDelete = onDelete,
+                    onEventSelected = onEventSelected,
+                )
+            }
         } else {
             items(visible, key = { it.id }) { event ->
                 EventRow(
@@ -736,6 +754,141 @@ private fun EventList(
         }
     }
 }
+
+private fun List<CalendarEvent>.nextEventId(selectedDate: LocalDate, zone: ZoneId): String? {
+    val today = LocalDate.now(zone)
+    val now = java.time.Instant.now()
+    return filter { event ->
+        event.status == EventStatus.SCHEDULED &&
+            when {
+                selectedDate.isBefore(today) -> false
+                selectedDate == today -> !event.startAt.isBefore(now)
+                else -> true
+            }
+    }.minByOrNull { it.startAt }?.id
+}
+
+@Composable
+private fun TimelineEventRow(
+    event: CalendarEvent,
+    highlighted: Boolean,
+    onMarkDone: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onEventSelected: (String) -> Unit,
+) {
+    val zone = ZoneId.systemDefault()
+    val shape = RoundedCornerShape(8.dp)
+    val muted = event.status == EventStatus.DONE
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("day-timeline-row"),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(58.dp)
+                .padding(top = 10.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                event.timelineStartLabel(zone),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (highlighted) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            event.timelineEndLabel(zone)?.let { end ->
+                Text(
+                    end,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .size(if (highlighted) 12.dp else 9.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        muted -> MaterialTheme.colorScheme.outlineVariant
+                        highlighted -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.secondary
+                    },
+                ),
+        )
+        Surface(
+            modifier = Modifier
+                .weight(1f)
+                .clip(shape)
+                .clickable { onEventSelected(event.id) },
+            shape = shape,
+            color = if (highlighted) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.background
+            },
+            tonalElevation = if (highlighted) 2.dp else 0.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    if (highlighted) {
+                        Text(
+                            "下一个提醒",
+                            modifier = Modifier.testTag("day-next-reminder-label"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Text(
+                        event.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    event.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                        Text(
+                            notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                IconButton(onClick = { onMarkDone(event.id) }) {
+                    Icon(Icons.Rounded.Check, contentDescription = "完成")
+                }
+                IconButton(onClick = { onDelete(event.id) }) {
+                    Icon(Icons.Rounded.Delete, contentDescription = "删除")
+                }
+            }
+        }
+    }
+}
+
+private fun CalendarEvent.timelineStartLabel(zone: ZoneId): String =
+    if (allDay) {
+        "全天"
+    } else {
+        startAt.atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
+    }
+
+private fun CalendarEvent.timelineEndLabel(zone: ZoneId): String? =
+    if (allDay) {
+        null
+    } else {
+        endAt?.atZone(zone)?.format(DateTimeFormatter.ofPattern("HH:mm"))
+    }
 
 @Composable
 private fun EventRow(
@@ -1289,7 +1442,8 @@ private fun SettingsSheet(
     onApiKeyChanged: (String) -> Unit,
     onDefaultReminderChanged: (String) -> Unit,
     onDefaultDurationChanged: (String) -> Unit,
-    onExportEvents: () -> Unit,
+    onExportJson: () -> Unit,
+    onExportIcs: () -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
     onClose: () -> Unit,
@@ -1297,6 +1451,7 @@ private fun SettingsSheet(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -1364,12 +1519,31 @@ private fun SettingsSheet(
                 }
             }
         }
-        TextButton(
-            onClick = onExportEvents,
-            enabled = state.events.isNotEmpty(),
-            modifier = Modifier.testTag("settings-export-button"),
-        ) {
-            Text("导出本地日程")
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("本地备份", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    onClick = onExportJson,
+                    enabled = state.events.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("settings-export-json-button"),
+                ) {
+                    Text("导出 JSON")
+                }
+                TextButton(
+                    onClick = onExportIcs,
+                    enabled = state.events.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("settings-export-ics-button"),
+                ) {
+                    Text("导出 ICS")
+                }
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1396,38 +1570,42 @@ private fun SettingsSheet(
     }
 }
 
-private fun exportEventsJson(events: List<CalendarEvent>): String =
-    events.joinToString(
-        prefix = "[\n",
-        postfix = "\n]",
-        separator = ",\n",
-    ) { event ->
-        """
-        |  {
-        |    "id": "${event.id.escapeJson()}",
-        |    "title": "${event.title.escapeJson()}",
-        |    "notes": ${event.notes?.let { "\"${it.escapeJson()}\"" } ?: "null"},
-        |    "startAt": "${event.startAt}",
-        |    "endAt": ${event.endAt?.let { "\"$it\"" } ?: "null"},
-        |    "allDay": ${event.allDay},
-        |    "reminderMinutes": [${event.reminderMinutes.joinToString(",")}],
-        |    "status": "${event.status.name}",
-        |    "sourceTranscript": ${event.sourceTranscript?.let { "\"${it.escapeJson()}\"" } ?: "null"},
-        |    "aiConfidence": ${event.aiConfidence}
-        |  }
-        """.trimMargin()
+private enum class CalendarExportFormat(
+    val mimeType: String,
+    val subject: String,
+    val chooserTitle: String,
+) {
+    JSON(
+        mimeType = "application/json",
+        subject = "声历日程备份 JSON",
+        chooserTitle = "导出 JSON",
+    ),
+    ICS(
+        mimeType = "text/calendar",
+        subject = "声历日程备份 ICS",
+        chooserTitle = "导出 ICS",
+    ),
+}
+
+private fun shareEvents(
+    context: android.content.Context,
+    events: List<CalendarEvent>,
+    format: CalendarExportFormat,
+    onEmpty: (String) -> Unit,
+) {
+    if (events.isEmpty()) {
+        onEmpty("暂无可导出的日程。")
+        return
     }
 
-private fun String.escapeJson(): String =
-    buildString {
-        this@escapeJson.forEach { char ->
-            when (char) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> append(char)
-            }
-        }
+    val payload = when (format) {
+        CalendarExportFormat.JSON -> exportEventsJson(events)
+        CalendarExportFormat.ICS -> exportEventsIcs(events)
     }
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = format.mimeType
+        putExtra(Intent.EXTRA_SUBJECT, format.subject)
+        putExtra(Intent.EXTRA_TEXT, payload)
+    }
+    context.startActivity(Intent.createChooser(intent, format.chooserTitle))
+}
