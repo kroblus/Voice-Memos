@@ -23,6 +23,12 @@ class CalendarRepository(
         return entity.toDomain()
     }
 
+    suspend fun importEvents(events: List<CalendarEvent>): Int {
+        if (events.isEmpty()) return 0
+        dao.upsertAll(events.map(CalendarEvent::toEntity))
+        return events.size
+    }
+
     suspend fun updateStatus(id: String, status: EventStatus) {
         dao.updateStatus(
             id = id,
@@ -67,5 +73,9 @@ class CalendarRepository(
 
     suspend fun deleteCompleted() {
         dao.deleteByStatus(EventStatus.DONE.name)
+    }
+
+    suspend fun deleteAll() {
+        dao.deleteAll()
     }
 }

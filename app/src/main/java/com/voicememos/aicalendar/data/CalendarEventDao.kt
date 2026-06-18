@@ -11,6 +11,9 @@ interface CalendarEventDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(event: CalendarEventEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(events: List<CalendarEventEntity>)
+
     @Query(
         """
         SELECT * FROM calendar_events
@@ -77,6 +80,9 @@ interface CalendarEventDao {
 
     @Query("DELETE FROM calendar_events WHERE status = :status")
     suspend fun deleteByStatus(status: String)
+
+    @Query("DELETE FROM calendar_events")
+    suspend fun deleteAll()
 
     @Query("SELECT COUNT(*) FROM calendar_events WHERE title = :title")
     suspend fun countByTitle(title: String): Int

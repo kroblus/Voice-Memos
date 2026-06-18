@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#F4F1EA</color>
-    <color name="widget_surface">#FFFCF6</color>
-    <color name="widget_primary">#215C5A</color>
+    <color name="ic_launcher_background">#F7FBF5</color>
+    <color name="widget_surface">#FFFFFFFF</color>
+    <color name="widget_primary">#2F6E5F</color>
     <color name="widget_on_primary">#FFFFFFFF</color>
-    <color name="widget_on_surface">#111A1C</color>
-    <color name="widget_on_surface_variant">#596465</color>
+    <color name="widget_on_surface">#273B35</color>
+    <color name="widget_on_surface_variant">#6B7E75</color>
+    <color name="widget_accent">#F39A8B</color>
 </resources>

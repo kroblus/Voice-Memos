@@ -1,9 +1,11 @@
 package com.voicememos.aicalendar
 
 import android.Manifest
+import android.content.Context
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
@@ -14,7 +16,11 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToString
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.rule.GrantPermissionRule
+import com.voicememos.aicalendar.data.AppDatabase
+import com.voicememos.aicalendar.security.SecureApiKeyStore
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -33,6 +39,8 @@ class RealDeepSeekCalendarFlowTest {
         val apiKey = InstrumentationRegistry.getArguments().getString("deepseekApiKey").orEmpty()
         assumeTrue("Pass -PrunRealDeepSeekTests=true with deepseekapi.txt to run this test.", apiKey.isNotBlank())
 
+        composeRule.resetLocalState()
+        composeRule.dismissOnboardingIfPresent()
         composeRule.onNodeWithTag("settings-button").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("api-key-field").performTextReplacement(apiKey)
@@ -102,6 +110,30 @@ class RealDeepSeekCalendarFlowTest {
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
         onNodeWithTag("draft-save-all-button").performSemanticsAction(SemanticsActions.OnClick)
         waitUntilNodeDoesNotExist("draft-panel")
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.dismissOnboardingIfPresent() {
+        waitForIdle()
+        runCatching {
+            waitUntil(5_000) {
+                onAllNodesWithTag("onboarding-complete-button").fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        val buttons = onAllNodesWithTag("onboarding-complete-button").fetchSemanticsNodes()
+        if (buttons.isNotEmpty()) {
+            onNodeWithTag("onboarding-complete-button")
+                .performSemanticsAction(SemanticsActions.OnClick)
+            waitUntilNodeDoesNotExist("onboarding-sheet")
+        }
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.resetLocalState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        runBlocking {
+            AppDatabase.get(context).clearAllTables()
+        }
+        SecureApiKeyStore(context).clear()
+        waitForIdle()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextDisplayed(

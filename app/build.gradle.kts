@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -10,6 +12,24 @@ val runRealDeepSeekTests = providers.gradleProperty("runRealDeepSeekTests")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
 val deepSeekApiKeyFile = rootProject.layout.projectDirectory.file("deepseekapi.txt").asFile
+val releaseKeystorePropertiesFile = rootProject.layout.projectDirectory.file("keystore.properties").asFile
+val releaseKeystoreProperties = Properties().apply {
+    if (releaseKeystorePropertiesFile.isFile) {
+        releaseKeystorePropertiesFile.inputStream().use(::load)
+    }
+}
+
+fun signingValue(propertyName: String, environmentName: String): String? =
+    (releaseKeystoreProperties.getProperty(propertyName) ?: System.getenv(environmentName))
+        ?.takeIf { it.isNotBlank() }
+
+val releaseStoreFilePath = signingValue("storeFile", "SHENGLI_RELEASE_STORE_FILE")
+val hasReleaseSigning = listOf(
+    releaseStoreFilePath,
+    signingValue("storePassword", "SHENGLI_RELEASE_STORE_PASSWORD"),
+    signingValue("keyAlias", "SHENGLI_RELEASE_KEY_ALIAS"),
+    signingValue("keyPassword", "SHENGLI_RELEASE_KEY_PASSWORD"),
+).all { it != null }
 
 android {
     namespace = "com.voicememos.aicalendar"
@@ -28,10 +48,24 @@ android {
         }
     }
 
+    signingConfigs {
+        create("releaseUpload") {
+            if (hasReleaseSigning) {
+                storeFile = file(requireNotNull(releaseStoreFilePath))
+                storePassword = signingValue("storePassword", "SHENGLI_RELEASE_STORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "SHENGLI_RELEASE_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "SHENGLI_RELEASE_KEY_PASSWORD")
+            } else {
+                initWith(getByName("debug"))
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("releaseUpload")
+            buildConfigField("boolean", "RELEASE_SIGNING_CONFIGURED", hasReleaseSigning.toString())
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

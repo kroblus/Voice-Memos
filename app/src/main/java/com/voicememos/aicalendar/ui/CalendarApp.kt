@@ -138,7 +138,17 @@ private fun CalendarWorkbench(
     }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* The receiver checks the final permission state before showing reminders. */ }
+    ) { viewModel.refreshPermissionStatus() }
+    val backupExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        uri?.let { viewModel.exportBackup(context.contentResolver, it) }
+    }
+    val backupImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri?.let { viewModel.importBackup(context.contentResolver, it) }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -210,18 +220,32 @@ private fun CalendarWorkbench(
     }
 
     if (state.showSettings) {
-        ModalBottomSheet(onDismissRequest = viewModel::closeSettings) {
+        ModalBottomSheet(
+            onDismissRequest = viewModel::closeSettings,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
             SettingsSheet(
                 state = state,
                 onApiKeyChanged = viewModel::updateApiKeyInput,
                 onDefaultReminderChanged = viewModel::updateDefaultReminderMinutesInput,
                 onDefaultDurationChanged = viewModel::updateDefaultDurationMinutesInput,
                 onExportJson = {
-                    shareEvents(context, state.events, CalendarExportFormat.JSON, viewModel::showError)
+                    backupExportLauncher.launch("shengli-backup.json")
+                },
+                onImportJson = {
+                    backupImportLauncher.launch(arrayOf("application/json", "text/*"))
                 },
                 onExportIcs = {
                     shareEvents(context, state.events, CalendarExportFormat.ICS, viewModel::showError)
                 },
+                onPrivacy = viewModel::showPrivacyDetails,
+                onReset = viewModel::requestResetConfirmation,
+                onDismissReset = viewModel::dismissResetConfirmation,
+                onConfirmReset = viewModel::deleteAllLocalData,
+                onOpenAppSettings = viewModel::openAppSettings,
+                onOpenNotificationSettings = viewModel::openNotificationSettings,
+                onOpenExactAlarmSettings = viewModel::openExactAlarmSettings,
+                onRefreshPermissions = viewModel::refreshPermissionStatus,
                 onSave = viewModel::saveApiKey,
                 onClearApiKey = viewModel::clearApiKey,
                 onClose = viewModel::closeSettings,
@@ -229,8 +253,36 @@ private fun CalendarWorkbench(
         }
     }
 
+    if (!state.onboardingSeen) {
+        ModalBottomSheet(
+            onDismissRequest = {},
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
+            OnboardingSheet(
+                state = state,
+                onApiKeyChanged = viewModel::updateApiKeyInput,
+                onDefaultReminderChanged = viewModel::updateDefaultReminderMinutesInput,
+                onDefaultDurationChanged = viewModel::updateDefaultDurationMinutesInput,
+                onComplete = viewModel::completeOnboarding,
+                onOpenSystemSettings = viewModel::openAppSettings,
+            )
+        }
+    }
+
+    if (state.showPrivacyDetails) {
+        ModalBottomSheet(
+            onDismissRequest = viewModel::hidePrivacyDetails,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
+            PrivacyDetailsSheet(onClose = viewModel::hidePrivacyDetails)
+        }
+    }
+
     if (state.draftEditors.isNotEmpty() && state.showDraftSheet) {
-        ModalBottomSheet(onDismissRequest = viewModel::hideDraftSheet) {
+        ModalBottomSheet(
+            onDismissRequest = viewModel::hideDraftSheet,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
             DraftPanel(
                 drafts = state.draftEditors,
                 onUpdate = viewModel::updateDraft,
@@ -253,7 +305,10 @@ private fun CalendarWorkbench(
     }
 
     state.eventEditor?.let { editor ->
-        ModalBottomSheet(onDismissRequest = viewModel::closeEventEditor) {
+        ModalBottomSheet(
+            onDismissRequest = viewModel::closeEventEditor,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
             EventEditorSheet(
                 editor = editor,
                 onUpdate = viewModel::updateEventEditor,
@@ -261,6 +316,141 @@ private fun CalendarWorkbench(
                 onClose = viewModel::closeEventEditor,
             )
         }
+    }
+}
+
+@Composable
+private fun OnboardingSheet(
+    state: CalendarUiState,
+    onApiKeyChanged: (String) -> Unit,
+    onDefaultReminderChanged: (String) -> Unit,
+    onDefaultDurationChanged: (String) -> Unit,
+    onComplete: () -> Unit,
+    onOpenSystemSettings: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+            .testTag("onboarding-sheet"),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("欢迎来到声历", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "说一句话，把日程留在本机。生成时才会把文本发送给 DeepSeek。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OnboardingPoint("本地日历", "日程、草稿和历史保存在设备里，不需要账号。")
+        OnboardingPoint("语音优先", "麦克风权限只在录音时请求，也可以直接输入文字。")
+        OnboardingPoint("准点提醒", "保存事件时会保留 0 分钟提醒，并按需请求通知权限。")
+        OutlinedTextField(
+            value = state.apiKeyInput,
+            onValueChange = onApiKeyChanged,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("onboarding-api-key-field"),
+            label = { Text("DeepSeek API key（可稍后填写）") },
+            singleLine = true,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OutlinedTextField(
+                value = state.defaultDurationMinutesInput,
+                onValueChange = onDefaultDurationChanged,
+                modifier = Modifier.weight(1f),
+                label = { Text("默认时长") },
+                suffix = { Text("分钟") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            OutlinedTextField(
+                value = state.defaultReminderMinutesInput,
+                onValueChange = onDefaultReminderChanged,
+                modifier = Modifier.weight(1f),
+                label = { Text("提前提醒") },
+                suffix = { Text("分钟") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onOpenSystemSettings) {
+                Text("系统权限")
+            }
+            Button(
+                onClick = onComplete,
+                modifier = Modifier.testTag("onboarding-complete-button"),
+            ) {
+                Text("开始使用")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun OnboardingPoint(
+    title: String,
+    body: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun PrivacyDetailsSheet(
+    onClose: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+            .testTag("privacy-details-sheet"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("隐私与数据", style = MaterialTheme.typography.headlineSmall)
+        PrivacyLine("本地保存", "日程、提醒、解析历史保存在本机数据库。")
+        PrivacyLine("按需联网", "只有点击生成时，输入文本才会发送给 DeepSeek 解析。")
+        PrivacyLine("密钥加密", "DeepSeek API key 由 Android Keystore 加密保存。")
+        PrivacyLine("不做画像", "没有账号、广告、分析 SDK，也不做云同步。")
+        PrivacyLine("显式备份", "导出的备份只包含日程数据，不包含 API key。")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Button(onClick = onClose) { Text("知道了") }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun PrivacyLine(
+    title: String,
+    body: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -1520,17 +1710,330 @@ private fun EventEditorSheet(
 }
 
 @Composable
+private fun CommercialSettingsContent(
+    state: CalendarUiState,
+    onApiKeyChanged: (String) -> Unit,
+    onDefaultReminderChanged: (String) -> Unit,
+    onDefaultDurationChanged: (String) -> Unit,
+    onExportJson: () -> Unit,
+    onImportJson: () -> Unit,
+    onExportIcs: () -> Unit,
+    onPrivacy: () -> Unit,
+    onReset: () -> Unit,
+    onDismissReset: () -> Unit,
+    onConfirmReset: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenExactAlarmSettings: () -> Unit,
+    onRefreshPermissions: () -> Unit,
+    onSave: () -> Unit,
+    onClearApiKey: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+            .testTag("settings-commercial-sheet"),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("设置", style = MaterialTheme.typography.headlineSmall)
+        SettingsSection(title = "生成") {
+            Text(
+                if (state.apiKeySaved) {
+                    "API key 已加密保存在本机。"
+                } else {
+                    "保存 DeepSeek API key 后即可生成日程。"
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = state.apiKeyInput,
+                onValueChange = onApiKeyChanged,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("api-key-field"),
+                label = { Text("DeepSeek API key") },
+                singleLine = true,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = state.defaultDurationMinutesInput,
+                    onValueChange = onDefaultDurationChanged,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("default-duration-field"),
+                    label = { Text("默认时长") },
+                    suffix = { Text("分钟") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(
+                    value = state.defaultReminderMinutesInput,
+                    onValueChange = onDefaultReminderChanged,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("default-reminder-field"),
+                    label = { Text("提前提醒") },
+                    suffix = { Text("分钟") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            }
+        }
+
+        SettingsSection(title = "权限与提醒") {
+            PermissionRow(
+                title = "麦克风",
+                status = state.microphonePermission,
+                action = "打开设置",
+                onAction = onOpenAppSettings,
+            )
+            PermissionRow(
+                title = "通知",
+                status = state.notificationPermission,
+                action = "通知设置",
+                onAction = onOpenNotificationSettings,
+            )
+            PermissionRow(
+                title = "准点提醒",
+                status = state.exactAlarmPermission,
+                action = "提醒设置",
+                onAction = onOpenExactAlarmSettings,
+            )
+            TextButton(onClick = onRefreshPermissions) {
+                Icon(Icons.Rounded.Today, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("刷新状态")
+            }
+        }
+
+        SettingsSection(title = "本地数据") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    onClick = onExportJson,
+                    enabled = state.events.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("settings-export-json-button"),
+                ) {
+                    Icon(Icons.Rounded.Save, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("备份")
+                }
+                TextButton(
+                    onClick = onImportJson,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("settings-import-json-button"),
+                ) {
+                    Icon(Icons.Rounded.Edit, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("导入")
+                }
+                TextButton(
+                    onClick = onExportIcs,
+                    enabled = state.events.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("settings-export-ics-button"),
+                ) {
+                    Icon(Icons.Rounded.Notifications, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("ICS")
+                }
+            }
+            state.backupMessage?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = onPrivacy, modifier = Modifier.testTag("settings-privacy-button")) {
+                Icon(Icons.Rounded.Settings, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("隐私与数据说明")
+            }
+        }
+
+        SettingsSection(title = "危险操作") {
+            if (state.showResetConfirmation) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("清空本地数据？", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "会删除日程、设置、解析历史和本机 API key。备份文件不会受影响。",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = onDismissReset) { Text("取消") }
+                            Spacer(Modifier.width(8.dp))
+                            Button(
+                                onClick = onConfirmReset,
+                                modifier = Modifier.testTag("settings-confirm-reset-button"),
+                            ) { Text("确认清空") }
+                        }
+                    }
+                }
+            } else {
+                TextButton(
+                    onClick = onReset,
+                    modifier = Modifier.testTag("settings-reset-button"),
+                ) {
+                    Icon(Icons.Rounded.Delete, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("清空本地数据")
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (state.apiKeySaved) {
+                TextButton(
+                    onClick = onClearApiKey,
+                    modifier = Modifier.testTag("settings-clear-key-button"),
+                ) { Text("清除密钥") }
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
+            Row(horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onClose) { Text("关闭") }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = onSave,
+                    modifier = Modifier.testTag("settings-save-button"),
+                ) { Text("保存") }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun PermissionRow(
+    title: String,
+    status: PermissionHealth,
+    action: String,
+    onAction: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (status == PermissionHealth.READY) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.secondary
+                        },
+                    ),
+            )
+            Column {
+                Text(title, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    status.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        TextButton(
+            onClick = onAction,
+            enabled = status != PermissionHealth.READY,
+        ) { Text(action) }
+    }
+}
+
+@Composable
 private fun SettingsSheet(
     state: CalendarUiState,
     onApiKeyChanged: (String) -> Unit,
     onDefaultReminderChanged: (String) -> Unit,
     onDefaultDurationChanged: (String) -> Unit,
     onExportJson: () -> Unit,
+    onImportJson: () -> Unit,
     onExportIcs: () -> Unit,
+    onPrivacy: () -> Unit,
+    onReset: () -> Unit,
+    onDismissReset: () -> Unit,
+    onConfirmReset: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenExactAlarmSettings: () -> Unit,
+    onRefreshPermissions: () -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
     onClose: () -> Unit,
 ) {
+    CommercialSettingsContent(
+        state = state,
+        onApiKeyChanged = onApiKeyChanged,
+        onDefaultReminderChanged = onDefaultReminderChanged,
+        onDefaultDurationChanged = onDefaultDurationChanged,
+        onExportJson = onExportJson,
+        onImportJson = onImportJson,
+        onExportIcs = onExportIcs,
+        onPrivacy = onPrivacy,
+        onReset = onReset,
+        onDismissReset = onDismissReset,
+        onConfirmReset = onConfirmReset,
+        onOpenAppSettings = onOpenAppSettings,
+        onOpenNotificationSettings = onOpenNotificationSettings,
+        onOpenExactAlarmSettings = onOpenExactAlarmSettings,
+        onRefreshPermissions = onRefreshPermissions,
+        onSave = onSave,
+        onClearApiKey = onClearApiKey,
+        onClose = onClose,
+    )
+    return
     Column(
         modifier = Modifier
             .fillMaxWidth()

@@ -25,10 +25,17 @@ enum class AgendaFilter(val label: String) {
     DONE("已完成"),
 }
 
+enum class PermissionHealth(val label: String) {
+    READY("已开启"),
+    NEEDS_ACTION("待开启"),
+    UNAVAILABLE("不可用"),
+}
+
 data class CalendarUiState(
     val selectedDate: LocalDate = LocalDate.now(),
     val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
     val themeMode: AppThemeMode = AppThemeMode.LIGHT,
+    val onboardingSeen: Boolean = false,
     val events: List<CalendarEvent> = emptyList(),
     val textInput: String = "",
     val partialTranscript: String = "",
@@ -48,6 +55,12 @@ data class CalendarUiState(
     val agendaFilter: AgendaFilter = AgendaFilter.ALL,
     val eventEditor: EventEditor? = null,
     val parseHistory: List<ParseHistoryItem> = emptyList(),
+    val microphonePermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
+    val notificationPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
+    val exactAlarmPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
+    val showPrivacyDetails: Boolean = false,
+    val showResetConfirmation: Boolean = false,
+    val backupMessage: String? = null,
 )
 
 data class DraftEditor(

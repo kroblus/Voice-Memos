@@ -38,6 +38,22 @@ fun DraftCalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEnti
     )
 }
 
+fun CalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEntity =
+    CalendarEventEntity(
+        id = id,
+        title = title.trim(),
+        notes = notes?.trim()?.takeIf { it.isNotEmpty() },
+        startAtEpochMillis = startAt.toEpochMilli(),
+        endAtEpochMillis = endAt?.toEpochMilli(),
+        allDay = allDay,
+        reminderMinutesCsv = reminderMinutes.toReminderCsv(),
+        status = status.name,
+        sourceTranscript = sourceTranscript?.trim()?.takeIf { it.isNotEmpty() },
+        aiConfidence = aiConfidence.coerceIn(0.0, 1.0),
+        createdAtEpochMillis = now.toEpochMilli(),
+        updatedAtEpochMillis = now.toEpochMilli(),
+    )
+
 fun List<Int>.toReminderCsv(): String =
     asSequence()
         .plus(0)

@@ -1,6 +1,7 @@
 package com.voicememos.aicalendar
 
 import android.Manifest
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasText
@@ -20,6 +21,7 @@ import androidx.compose.ui.test.printToString
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.rule.GrantPermissionRule
 import com.voicememos.aicalendar.data.AppDatabase
+import com.voicememos.aicalendar.security.SecureApiKeyStore
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -35,6 +37,8 @@ class VoiceCalendarFlowTest {
 
     @Test
     fun mockDeepSeekFlowCreatesEventsInCalendar() {
+        composeRule.resetLocalState()
+        composeRule.dismissOnboardingIfPresent()
         composeRule.assertInputActionButtonsDoNotOverlap()
         composeRule.assertMonthHeaderAlignsWithDates()
         composeRule.onNodeWithTag("theme-toggle-button").performClick()
@@ -78,6 +82,8 @@ class VoiceCalendarFlowTest {
 
     @Test
     fun mockDailyRepeatCreatesMultipleLocalEvents() {
+        composeRule.resetLocalState()
+        composeRule.dismissOnboardingIfPresent()
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
@@ -108,6 +114,8 @@ class VoiceCalendarFlowTest {
 
     @Test
     fun dayTimelineAndExportControlsAreAvailable() {
+        composeRule.resetLocalState()
+        composeRule.dismissOnboardingIfPresent()
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
@@ -132,8 +140,10 @@ class VoiceCalendarFlowTest {
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
-        composeRule.onNodeWithTag("settings-export-json-button").assertIsDisplayed()
-        composeRule.onNodeWithTag("settings-export-ics-button").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings-export-json-button").assertExists()
+        composeRule.onNodeWithTag("settings-import-json-button").assertExists()
+        composeRule.onNodeWithTag("settings-export-ics-button").assertExists()
+        composeRule.onNodeWithTag("settings-privacy-button").assertExists()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertInputActionButtonsDoNotOverlap() {
@@ -200,6 +210,33 @@ class VoiceCalendarFlowTest {
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
         onNodeWithTag("draft-save-all-button").performSemanticsAction(SemanticsActions.OnClick)
         waitUntilNodeDoesNotExist("draft-panel")
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.dismissOnboardingIfPresent() {
+        waitForIdle()
+        runCatching {
+            waitUntil(5_000) {
+                onAllNodesWithTag("onboarding-complete-button").fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        val buttons = onAllNodesWithTag("onboarding-complete-button").fetchSemanticsNodes()
+        if (buttons.isNotEmpty()) {
+            onNodeWithTag("onboarding-complete-button")
+                .performSemanticsAction(SemanticsActions.OnClick)
+            waitUntilNodeDoesNotExist("onboarding-sheet")
+        }
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.resetLocalState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        runBlocking {
+            AppDatabase.get(context).clearAllTables()
+        }
+        SecureApiKeyStore(context).apply {
+            clear()
+            save("mock-deepseek")
+        }
+        waitForIdle()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextDisplayed(

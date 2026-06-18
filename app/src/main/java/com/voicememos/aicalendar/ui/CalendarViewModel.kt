@@ -1,11 +1,21 @@
 package com.voicememos.aicalendar.ui
 
 import android.content.Context
+import android.content.ContentResolver
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.app.AlarmManager
+import android.Manifest
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voicememos.aicalendar.ai.DeepSeekCalendarParser
 import com.voicememos.aicalendar.data.CalendarRepository
 import com.voicememos.aicalendar.data.SettingsRepository
+import com.voicememos.aicalendar.data.decodeCalendarBackup
+import com.voicememos.aicalendar.data.exportCalendarBackup
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.domain.ParseHistoryItem
@@ -23,7 +33,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CalendarViewModel(
     private val appContext: Context,
@@ -56,6 +68,13 @@ class CalendarViewModel(
                 }
         }
         viewModelScope.launch {
+            settingsRepository.observeOnboardingSeen()
+                .distinctUntilChanged()
+                .collect { seen ->
+                    _uiState.update { it.copy(onboardingSeen = seen) }
+                }
+        }
+        viewModelScope.launch {
             settingsRepository.observeDefaultReminderMinutes()
                 .distinctUntilChanged()
                 .collect { value ->
@@ -80,6 +99,7 @@ class CalendarViewModel(
                     _uiState.update { it.copy(parseHistory = history) }
                 }
         }
+        refreshPermissionStatus()
     }
 
     fun selectDate(date: LocalDate) {
@@ -99,6 +119,79 @@ class CalendarViewModel(
         viewModelScope.launch {
             settingsRepository.setThemeMode(mode.name)
         }
+    }
+
+    fun completeOnboarding() {
+        if (!saveUserSettings(closeSettings = false)) return
+        viewModelScope.launch {
+            settingsRepository.setOnboardingSeen(true)
+        }
+        _uiState.update {
+            it.copy(
+                onboardingSeen = true,
+                showSettings = false,
+                errorMessage = null,
+                successMessage = "准备好了",
+            )
+        }
+    }
+
+    fun refreshPermissionStatus() {
+        val microphoneStatus = when {
+            !appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE) -> PermissionHealth.UNAVAILABLE
+            appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED ->
+                PermissionHealth.READY
+            else -> PermissionHealth.NEEDS_ACTION
+        }
+        val notificationStatus = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            PermissionHealth.READY
+        } else if (appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            PermissionHealth.READY
+        } else {
+            PermissionHealth.NEEDS_ACTION
+        }
+        val exactAlarmStatus = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            PermissionHealth.READY
+        } else {
+            val alarmManager = appContext.getSystemService(AlarmManager::class.java)
+            if (alarmManager.canScheduleExactAlarms()) PermissionHealth.READY else PermissionHealth.NEEDS_ACTION
+        }
+        _uiState.update {
+            it.copy(
+                microphonePermission = microphoneStatus,
+                notificationPermission = notificationStatus,
+                exactAlarmPermission = exactAlarmStatus,
+            )
+        }
+    }
+
+    fun openAppSettings() {
+        startSettingsIntent(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${appContext.packageName}")),
+        )
+    }
+
+    fun openNotificationSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, appContext.packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${appContext.packageName}"))
+        }
+        startSettingsIntent(intent)
+    }
+
+    fun openExactAlarmSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                .setData(Uri.parse("package:${appContext.packageName}"))
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${appContext.packageName}"))
+        }
+        startSettingsIntent(intent)
     }
 
     fun updateTextInput(value: String) {
@@ -392,7 +485,104 @@ class CalendarViewModel(
         }
     }
 
+    fun exportBackup(contentResolver: ContentResolver, uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                val payload = exportCalendarBackup(_uiState.value.events)
+                withContext(Dispatchers.IO) {
+                    contentResolver.openOutputStream(uri)?.use { output ->
+                        output.bufferedWriter(Charsets.UTF_8).use { writer ->
+                            writer.write(payload)
+                        }
+                    } ?: error("无法写入备份文件")
+                }
+            }.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        backupMessage = "备份已导出",
+                        successMessage = "备份已导出",
+                        errorMessage = null,
+                    )
+                }
+            }.onFailure { error ->
+                showError(error.message ?: "导出失败，请重试。")
+            }
+        }
+    }
+
+    fun importBackup(contentResolver: ContentResolver, uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                val raw = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        input.bufferedReader(Charsets.UTF_8).use { reader -> reader.readText() }
+                    } ?: error("无法读取备份文件")
+                }
+                val result = decodeCalendarBackup(raw)
+                val importedCount = calendarRepository.importEvents(result.events)
+                result.events
+                    .filter { it.status == EventStatus.SCHEDULED }
+                    .forEach(reminderScheduler::schedule)
+                importedCount to result.skippedCount
+            }.onSuccess { (importedCount, skippedCount) ->
+                _uiState.update {
+                    it.copy(
+                        backupMessage = "已导入 $importedCount 项",
+                        successMessage = if (skippedCount > 0) {
+                            "已导入 $importedCount 项，跳过 $skippedCount 项"
+                        } else {
+                            "已导入 $importedCount 项"
+                        },
+                        errorMessage = null,
+                    )
+                }
+                ShengliWidgetProvider.updateAll(appContext)
+            }.onFailure { error ->
+                showError(error.message ?: "导入失败，请检查备份文件。")
+            }
+        }
+    }
+
+    fun showPrivacyDetails() {
+        _uiState.update { it.copy(showPrivacyDetails = true, showSettings = false) }
+    }
+
+    fun hidePrivacyDetails() {
+        _uiState.update { it.copy(showPrivacyDetails = false) }
+    }
+
+    fun requestResetConfirmation() {
+        _uiState.update { it.copy(showResetConfirmation = true) }
+    }
+
+    fun dismissResetConfirmation() {
+        _uiState.update { it.copy(showResetConfirmation = false) }
+    }
+
+    fun deleteAllLocalData() {
+        val existingEvents = _uiState.value.events
+        viewModelScope.launch {
+            existingEvents.forEach { event ->
+                reminderScheduler.cancel(event.id, event.reminderMinutes)
+            }
+            calendarRepository.deleteAll()
+            settingsRepository.clearAll()
+            secureApiKeyStore.clear()
+            _uiState.update {
+                CalendarUiState(
+                    apiKeySaved = false,
+                    successMessage = "本地数据已清空",
+                    microphonePermission = it.microphonePermission,
+                    notificationPermission = it.notificationPermission,
+                    exactAlarmPermission = it.exactAlarmPermission,
+                )
+            }
+            ShengliWidgetProvider.updateAll(appContext)
+        }
+    }
+
     fun openSettings() {
+        refreshPermissionStatus()
         _uiState.update { it.copy(showSettings = true, apiKeyInput = "") }
     }
 
@@ -413,6 +603,8 @@ class CalendarViewModel(
     }
 
     fun saveApiKey() {
+        saveUserSettings(closeSettings = true)
+        return
         val state = _uiState.value
         val defaultReminder = state.defaultReminderMinutesInput.toIntOrNull()
         val defaultDuration = state.defaultDurationMinutesInput.toIntOrNull()
@@ -422,8 +614,8 @@ class CalendarViewModel(
         }
         state.apiKeyInput.trim().takeIf { it.isNotEmpty() }?.let(secureApiKeyStore::save)
         viewModelScope.launch {
-            settingsRepository.setDefaultReminderMinutes(defaultReminder)
-            settingsRepository.setDefaultDurationMinutes(defaultDuration)
+            settingsRepository.setDefaultReminderMinutes(defaultReminder ?: 10)
+            settingsRepository.setDefaultDurationMinutes(defaultDuration ?: 30)
         }
         _uiState.update {
             it.copy(
@@ -450,6 +642,39 @@ class CalendarViewModel(
 
     fun consumeSuccessMessage() {
         _uiState.update { it.copy(successMessage = null) }
+    }
+
+    private fun saveUserSettings(closeSettings: Boolean): Boolean {
+        val state = _uiState.value
+        val defaultReminder = state.defaultReminderMinutesInput.toIntOrNull()
+        val defaultDuration = state.defaultDurationMinutesInput.toIntOrNull()
+        if (defaultReminder == null || defaultDuration == null || defaultDuration <= 0) {
+            showError("默认提醒和默认时长需要填写有效数字。")
+            return false
+        }
+        state.apiKeyInput.trim().takeIf { it.isNotEmpty() }?.let(secureApiKeyStore::save)
+        viewModelScope.launch {
+            settingsRepository.setDefaultReminderMinutes(defaultReminder)
+            settingsRepository.setDefaultDurationMinutes(defaultDuration)
+        }
+        _uiState.update {
+            it.copy(
+                apiKeyInput = "",
+                apiKeySaved = secureApiKeyStore.hasKey(),
+                showSettings = if (closeSettings) false else it.showSettings,
+                errorMessage = null,
+                successMessage = "设置已保存",
+            )
+        }
+        return true
+    }
+
+    private fun startSettingsIntent(intent: Intent) {
+        runCatching {
+            appContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            showError("无法打开系统设置，请从系统设置里找到声历。")
+        }
     }
 
     private fun Throwable.toUserMessage(): String =

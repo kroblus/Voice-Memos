@@ -13,11 +13,18 @@ class SettingsRepository(
 
     fun observeThemeMode(): Flow<String?> = dao.observeValue(THEME_MODE)
 
+    fun observeOnboardingSeen(): Flow<Boolean> =
+        dao.observeValue(ONBOARDING_SEEN).map { it == "true" }
+
     fun observeParseHistory(): Flow<List<ParseHistoryItem>> =
         dao.observeValue(PARSE_HISTORY).map(::decodeParseHistory)
 
     suspend fun setThemeMode(value: String) {
         dao.set(AppSettingEntity(THEME_MODE, value))
+    }
+
+    suspend fun setOnboardingSeen(value: Boolean) {
+        dao.set(AppSettingEntity(ONBOARDING_SEEN, value.toString()))
     }
 
     suspend fun setDefaultReminderMinutes(value: Int) {
@@ -45,10 +52,15 @@ class SettingsRepository(
         dao.set(AppSettingEntity(PARSE_HISTORY, encodeParseHistory(emptyList())))
     }
 
+    suspend fun clearAll() {
+        dao.deleteAll()
+    }
+
     private companion object {
         const val DEFAULT_REMINDER_MINUTES = "default_reminder_minutes"
         const val DEFAULT_DURATION_MINUTES = "default_duration_minutes"
         const val THEME_MODE = "theme_mode"
+        const val ONBOARDING_SEEN = "onboarding_seen"
         const val PARSE_HISTORY = "parse_history"
         const val MAX_PARSE_HISTORY = 5
     }
