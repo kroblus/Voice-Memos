@@ -121,6 +121,14 @@ class CalendarViewModel(
         }
     }
 
+    fun openInputCurtain() {
+        _uiState.update { it.copy(showInputCurtain = true, errorMessage = null) }
+    }
+
+    fun closeInputCurtain() {
+        _uiState.update { it.copy(showInputCurtain = false) }
+    }
+
     fun completeOnboarding() {
         if (!saveUserSettings(closeSettings = false)) return
         viewModelScope.launch {
@@ -267,6 +275,7 @@ class CalendarViewModel(
                         isParsing = false,
                         draftEditors = result.events.map { draft -> draft.toEditor(zoneId) },
                         showDraftSheet = result.events.isNotEmpty(),
+                        showInputCurtain = false,
                         warnings = result.warnings,
                         errorMessage = if (result.events.isEmpty()) {
                             result.warnings.firstOrNull() ?: "没有解析出可创建的日程。"

@@ -41,6 +41,7 @@ data class CalendarUiState(
     val partialTranscript: String = "",
     val isListening: Boolean = false,
     val isParsing: Boolean = false,
+    val showInputCurtain: Boolean = false,
     val draftEditors: List<DraftEditor> = emptyList(),
     val showDraftSheet: Boolean = false,
     val warnings: List<String> = emptyList(),

@@ -29,7 +29,7 @@ import org.junit.Test
 class RealDeepSeekCalendarFlowTest {
     @get:Rule(order = 0)
     val notificationPermissionRule: GrantPermissionRule =
-        GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+        GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO)
 
     @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
@@ -49,6 +49,7 @@ class RealDeepSeekCalendarFlowTest {
         composeRule.onNodeWithTag("settings-save-button").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
 
+        composeRule.openInputCurtainForTextEntry()
         composeRule.onNodeWithTag("transcript-field")
             .performTextReplacement("明天中午11点提醒我打开电脑12点提醒我打开手机")
         closeSoftKeyboard()
@@ -94,6 +95,11 @@ class RealDeepSeekCalendarFlowTest {
         substring: Boolean = false,
     ) {
         onNodeWithTag("event-list").performScrollToNode(hasText(text, substring = substring))
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.openInputCurtainForTextEntry() {
+        onNodeWithTag("voice-input-button").performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeExists("voice-input-curtain")
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeDoesNotExist(

@@ -30,7 +30,7 @@ import org.junit.Test
 class VoiceCalendarFlowTest {
     @get:Rule(order = 0)
     val notificationPermissionRule: GrantPermissionRule =
-        GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+        GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO)
 
     @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
@@ -39,7 +39,7 @@ class VoiceCalendarFlowTest {
     fun mockDeepSeekFlowCreatesEventsInCalendar() {
         composeRule.resetLocalState()
         composeRule.dismissOnboardingIfPresent()
-        composeRule.assertInputActionButtonsDoNotOverlap()
+        composeRule.assertMainInputIsCollapsed()
         composeRule.assertMonthHeaderAlignsWithDates()
         composeRule.onNodeWithTag("theme-toggle-button").performClick()
         composeRule.onNodeWithTag("theme-toggle-button").performClick()
@@ -53,6 +53,7 @@ class VoiceCalendarFlowTest {
         composeRule.onNodeWithTag("settings-save-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
 
+        composeRule.openInputCurtainForTextEntry()
         composeRule.onNodeWithTag("transcript-field")
             .performTextReplacement("明天中午11点提醒我打开电脑12点提醒我打开手机")
         composeRule.onNodeWithTag("transcript-field").assertTextContains("打开电脑", substring = true)
@@ -70,9 +71,11 @@ class VoiceCalendarFlowTest {
         composeRule.waitUntilAnyTextContains("打开电脑")
         composeRule.scrollEventListToText("打开手机")
         composeRule.assertAnyTextContains("打开手机")
+        composeRule.openInputCurtainForTextEntry()
         composeRule.onAllNodesWithTag("parse-history-row").onFirst().assertIsDisplayed()
         composeRule.onAllNodesWithTag("parse-history-reuse-button").onFirst().assertIsDisplayed()
         composeRule.onAllNodesWithTag("parse-history-regenerate-button").onFirst().assertIsDisplayed()
+        composeRule.closeInputCurtain()
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
@@ -92,6 +95,7 @@ class VoiceCalendarFlowTest {
         composeRule.onNodeWithTag("settings-save-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
 
+        composeRule.openInputCurtainForTextEntry()
         composeRule.onNodeWithTag("transcript-field")
             .performTextReplacement("每天9点提醒我喝水")
         closeSoftKeyboard()
@@ -124,6 +128,7 @@ class VoiceCalendarFlowTest {
         composeRule.onNodeWithTag("settings-save-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
 
+        composeRule.openInputCurtainForTextEntry()
         composeRule.onNodeWithTag("transcript-field")
             .performTextReplacement("明天中午11点提醒我打开电脑")
         closeSoftKeyboard()
@@ -146,17 +151,21 @@ class VoiceCalendarFlowTest {
         composeRule.onNodeWithTag("settings-privacy-button").assertExists()
     }
 
-    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertInputActionButtonsDoNotOverlap() {
-        val voiceBounds = onNodeWithTag("voice-input-button").fetchSemanticsNode().boundsInRoot
-        val sendBounds = onNodeWithTag("generate-button").fetchSemanticsNode().boundsInRoot
-        val separated = voiceBounds.right <= sendBounds.left ||
-            sendBounds.right <= voiceBounds.left ||
-            voiceBounds.bottom <= sendBounds.top ||
-            sendBounds.bottom <= voiceBounds.top
-        assertTrue(
-            "Voice and send buttons overlap. voice=$voiceBounds send=$sendBounds",
-            separated,
-        )
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertMainInputIsCollapsed() {
+        onNodeWithTag("voice-input-button").assertIsDisplayed()
+        onNodeWithTag("voice-input-curtain").assertDoesNotExist()
+        onNodeWithTag("transcript-field").assertDoesNotExist()
+        onNodeWithTag("generate-button").assertDoesNotExist()
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.openInputCurtainForTextEntry() {
+        onNodeWithTag("voice-input-button").performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeExists("voice-input-curtain")
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.closeInputCurtain() {
+        onNodeWithTag("voice-input-curtain-close-button").performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeDoesNotExist("voice-input-curtain")
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertMonthHeaderAlignsWithDates() {

@@ -13,12 +13,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -149,72 +152,95 @@ private fun CalendarWorkbench(
     ) { uri ->
         uri?.let { viewModel.importBackup(context.contentResolver, it) }
     }
+    val toggleVoiceInput = {
+        viewModel.openInputCurtain()
+        if (state.isListening) {
+            speechController.stop()
+        } else {
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    val dismissInputCurtain = {
+        if (state.isListening) speechController.stop()
+        viewModel.closeInputCurtain()
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            ComposerBar(
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 18.dp)
+                    .padding(top = 14.dp, bottom = 104.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Header(
+                    selectedDate = state.selectedDate,
+                    themeMode = state.themeMode,
+                    apiKeySaved = state.apiKeySaved,
+                    onToday = viewModel::selectToday,
+                    onThemeToggle = {
+                        viewModel.setThemeMode(
+                            if (state.themeMode == AppThemeMode.DARK) AppThemeMode.LIGHT else AppThemeMode.DARK,
+                        )
+                    },
+                    onSettings = viewModel::openSettings,
+                )
+                ViewModeSelector(
+                    selected = state.viewMode,
+                    onSelect = viewModel::setViewMode,
+                )
+                CalendarSurface(
+                    modifier = Modifier.weight(1f, fill = false),
+                    state = state,
+                    onDateSelected = viewModel::selectDate,
+                    onMarkDone = viewModel::markDone,
+                    onDelete = viewModel::deleteEvent,
+                    onEventSelected = viewModel::openEventEditor,
+                    onAgendaQueryChanged = viewModel::updateAgendaQuery,
+                    onAgendaFilterSelected = viewModel::setAgendaFilter,
+                    onClearCompleted = viewModel::clearCompletedEvents,
+                )
+                WarningsAndErrors(state)
+                DraftReturnBar(
+                    drafts = state.draftEditors,
+                    visible = state.draftEditors.isNotEmpty() && !state.showDraftSheet,
+                    onOpen = viewModel::showDraftSheet,
+                )
+            }
+            VoiceInputFab(
+                isListening = state.isListening,
+                isParsing = state.isParsing,
+                onClick = toggleVoiceInput,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 18.dp),
+            )
+        }
+    }
+
+    if (state.showInputCurtain) {
+        ModalBottomSheet(
+            onDismissRequest = dismissInputCurtain,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
+            VoiceInputCurtain(
                 state = state,
                 onTextChanged = viewModel::updateTextInput,
                 onReuseTranscript = viewModel::reuseTranscript,
                 onRegenerateTranscript = viewModel::regenerateTranscript,
                 onClearHistory = viewModel::clearParseHistory,
                 onSubmit = viewModel::parseCurrentText,
-                onVoiceInput = {
-                    if (state.isListening) {
-                        speechController.stop()
-                    } else {
-                        recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 18.dp)
-                .padding(top = 14.dp, bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Header(
-                selectedDate = state.selectedDate,
-                themeMode = state.themeMode,
-                apiKeySaved = state.apiKeySaved,
-                onToday = viewModel::selectToday,
-                onThemeToggle = {
-                    viewModel.setThemeMode(
-                        if (state.themeMode == AppThemeMode.DARK) AppThemeMode.LIGHT else AppThemeMode.DARK,
-                    )
-                },
-                onSettings = viewModel::openSettings,
-            )
-            ViewModeSelector(
-                selected = state.viewMode,
-                onSelect = viewModel::setViewMode,
-            )
-            CalendarSurface(
-                modifier = Modifier.weight(1f, fill = false),
-                state = state,
-                onDateSelected = viewModel::selectDate,
-                onMarkDone = viewModel::markDone,
-                onDelete = viewModel::deleteEvent,
-                onEventSelected = viewModel::openEventEditor,
-                onAgendaQueryChanged = viewModel::updateAgendaQuery,
-                onAgendaFilterSelected = viewModel::setAgendaFilter,
-                onClearCompleted = viewModel::clearCompletedEvents,
-            )
-            WarningsAndErrors(state)
-            DraftReturnBar(
-                drafts = state.draftEditors,
-                visible = state.draftEditors.isNotEmpty() && !state.showDraftSheet,
-                onOpen = viewModel::showDraftSheet,
+                onVoiceInput = toggleVoiceInput,
+                onDismiss = dismissInputCurtain,
             )
         }
     }
@@ -904,6 +930,7 @@ private fun EventList(
 
     LazyColumn(
         modifier = Modifier.testTag("event-list"),
+        contentPadding = PaddingValues(bottom = 84.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (mode == CalendarViewMode.AGENDA) {
@@ -1131,6 +1158,172 @@ private fun EventRow(
         }
         IconButton(onClick = { onDelete(event.id) }) {
             Icon(Icons.Rounded.Delete, contentDescription = "删除")
+        }
+    }
+}
+
+@Composable
+private fun VoiceInputFab(
+    isListening: Boolean,
+    isParsing: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val containerColor = when {
+        isListening -> MaterialTheme.colorScheme.secondary
+        isParsing -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Surface(
+        modifier = modifier
+            .size(64.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .testTag("voice-input-button"),
+        shape = CircleShape,
+        color = containerColor,
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Rounded.KeyboardVoice,
+                contentDescription = if (isListening) "停止录音" else "语音输入",
+                tint = if (isListening) {
+                    MaterialTheme.colorScheme.onSecondary
+                } else {
+                    MaterialTheme.colorScheme.onPrimary
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoiceInputCurtain(
+    state: CalendarUiState,
+    onTextChanged: (String) -> Unit,
+    onReuseTranscript: (String) -> Unit,
+    onRegenerateTranscript: (String) -> Unit,
+    onClearHistory: () -> Unit,
+    onSubmit: () -> Unit,
+    onVoiceInput: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val transcript = state.partialTranscript.ifBlank { state.textInput }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 20.dp)
+            .testTag("voice-input-curtain"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = if (state.isListening) "正在听" else "说出日程",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (state.isParsing) "正在整理为日程" else "一句话可以拆成多个提醒",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("voice-input-curtain-close-button"),
+            ) {
+                Icon(Icons.Rounded.Close, contentDescription = "关闭")
+            }
+        }
+
+        if (state.isParsing) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.background,
+            tonalElevation = 1.dp,
+        ) {
+            OutlinedTextField(
+                value = transcript,
+                onValueChange = onTextChanged,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 112.dp, max = 168.dp)
+                    .padding(10.dp)
+                    .testTag("transcript-field"),
+                shape = RoundedCornerShape(8.dp),
+                label = { Text(if (state.isListening) "实时转写" else "文字输入") },
+                placeholder = { Text("明天11点打开电脑，12点打开手机") },
+                minLines = 3,
+                maxLines = 6,
+            )
+        }
+
+        if (state.parseHistory.isNotEmpty() &&
+            state.textInput.isBlank() &&
+            state.partialTranscript.isBlank()
+        ) {
+            ParseHistoryStrip(
+                history = state.parseHistory,
+                onReuseTranscript = onReuseTranscript,
+                onRegenerateTranscript = onRegenerateTranscript,
+                onClearHistory = onClearHistory,
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilledIconButton(
+                onClick = onVoiceInput,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("curtain-voice-toggle-button"),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = if (state.isListening) {
+                        MaterialTheme.colorScheme.secondary
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    contentColor = if (state.isListening) {
+                        MaterialTheme.colorScheme.onSecondary
+                    } else {
+                        MaterialTheme.colorScheme.onPrimary
+                    },
+                ),
+            ) {
+                Icon(
+                    Icons.Rounded.KeyboardVoice,
+                    contentDescription = if (state.isListening) "停止录音" else "继续语音",
+                )
+            }
+            Button(
+                onClick = onSubmit,
+                enabled = !state.isParsing && transcript.isNotBlank(),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("generate-button"),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("生成日程")
+            }
         }
     }
 }
