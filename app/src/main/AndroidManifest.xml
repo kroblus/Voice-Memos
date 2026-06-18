@@ -22,6 +22,17 @@
         <receiver
             android:name=".reminder.ReminderReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".widget.ShengliWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/shengli_widget_info" />
+        </receiver>
 
         <activity
             android:name=".MainActivity"

@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.speech.SpeechInputController
 import com.voicememos.aicalendar.ui.theme.ShengliTheme
 import java.time.LocalDate
@@ -1053,7 +1054,11 @@ private fun DraftEditorCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "${draft.timeSummary()}  ·  ${draft.reminderSummary()}",
+                        listOf(
+                            draft.timeSummary(),
+                            draft.reminderSummary(),
+                            draft.repeatSummary(),
+                        ).filter { it.isNotBlank() }.joinToString("  ·  "),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -1129,6 +1134,43 @@ private fun DraftEditorCard(
                         label = { Text("提醒分钟，逗号分隔") },
                         singleLine = true,
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = draft.repeatFrequency == null,
+                            onClick = { onUpdate { it.copy(repeatFrequency = null, repeatCount = "") } },
+                            label = { Text("不重复") },
+                        )
+                        RepeatFrequency.entries.forEach { frequency ->
+                            FilterChip(
+                                selected = draft.repeatFrequency == frequency,
+                                onClick = {
+                                    onUpdate {
+                                        it.copy(
+                                            repeatFrequency = frequency,
+                                            repeatCount = it.repeatCount.ifBlank {
+                                                when (frequency) {
+                                                    RepeatFrequency.DAILY -> "7"
+                                                    RepeatFrequency.WEEKLY -> "8"
+                                                }
+                                            },
+                                        )
+                                    }
+                                },
+                                label = { Text(frequency.label) },
+                            )
+                        }
+                    }
+                    if (draft.repeatFrequency != null) {
+                        OutlinedTextField(
+                            value = draft.repeatCount,
+                            onValueChange = { value -> onUpdate { it.copy(repeatCount = value.filter(Char::isDigit)) } },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            label = { Text("重复次数") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                    }
                 }
             }
         }
@@ -1154,6 +1196,15 @@ private fun DraftEditor.reminderSummary(): String {
         if (minute == 0) "到点" else "提前${minute}分钟"
     }
 }
+
+private fun DraftEditor.repeatSummary(): String =
+    repeatFrequency?.let { frequency ->
+        val count = repeatCount.toIntOrNull()?.coerceIn(2, 60) ?: when (frequency) {
+            RepeatFrequency.DAILY -> 7
+            RepeatFrequency.WEEKLY -> 8
+        }
+        "${frequency.label}，共 $count 次"
+    }.orEmpty()
 
 @Composable
 private fun EventEditorSheet(

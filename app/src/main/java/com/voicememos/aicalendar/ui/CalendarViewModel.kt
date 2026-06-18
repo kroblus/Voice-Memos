@@ -1,14 +1,19 @@
 package com.voicememos.aicalendar.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voicememos.aicalendar.ai.DeepSeekCalendarParser
 import com.voicememos.aicalendar.data.CalendarRepository
 import com.voicememos.aicalendar.data.SettingsRepository
+import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.reminder.ReminderScheduler
 import com.voicememos.aicalendar.security.SecureApiKeyStore
+import com.voicememos.aicalendar.widget.ShengliWidgetProvider
 import java.io.InterruptedIOException
+import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class CalendarViewModel(
+    private val appContext: Context,
     private val calendarRepository: CalendarRepository,
     private val settingsRepository: SettingsRepository,
     private val secureApiKeyStore: SecureApiKeyStore,
@@ -219,20 +225,22 @@ class CalendarViewModel(
         }
 
         viewModelScope.launch {
-            val event = calendarRepository.createFromDraft(draft)
-            reminderScheduler.schedule(event)
+            val events = draft.expandRepeats().map { occurrence ->
+                calendarRepository.createFromDraft(occurrence).also(reminderScheduler::schedule)
+            }
             _uiState.update { state ->
                 val remainingDrafts = state.draftEditors.filterNot { it.draftId == draftId }
                 state.copy(
-                    selectedDate = event.startAt.atZone(zoneId).toLocalDate(),
+                    selectedDate = events.first().startAt.atZone(zoneId).toLocalDate(),
                     draftEditors = remainingDrafts,
                     showDraftSheet = remainingDrafts.isNotEmpty(),
                     textInput = "",
                     partialTranscript = "",
                     errorMessage = null,
-                    successMessage = "已保存 1 项",
+                    successMessage = "已保存 ${events.size} 项",
                 )
             }
+            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -246,8 +254,10 @@ class CalendarViewModel(
         }
 
         viewModelScope.launch {
-            val savedEvents = creatableDrafts.map { (_, draft) ->
-                calendarRepository.createFromDraft(draft).also(reminderScheduler::schedule)
+            val savedEvents = creatableDrafts.flatMap { (_, draft) ->
+                draft.expandRepeats().map { occurrence ->
+                    calendarRepository.createFromDraft(occurrence).also(reminderScheduler::schedule)
+                }
             }
             val savedDraftIds = creatableDrafts.map { (editor, _) -> editor.draftId }.toSet()
             _uiState.update { state ->
@@ -267,6 +277,7 @@ class CalendarViewModel(
                     successMessage = "已保存 ${savedEvents.size} 项",
                 )
             }
+            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -276,6 +287,7 @@ class CalendarViewModel(
         }
         viewModelScope.launch {
             calendarRepository.updateStatus(eventId, EventStatus.DONE)
+            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -285,6 +297,7 @@ class CalendarViewModel(
         }
         viewModelScope.launch {
             calendarRepository.delete(eventId)
+            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -339,6 +352,7 @@ class CalendarViewModel(
                     successMessage = "事件已更新",
                 )
             }
+            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -356,6 +370,7 @@ class CalendarViewModel(
         viewModelScope.launch {
             calendarRepository.deleteCompleted()
             _uiState.update { it.copy(successMessage = "已清理 $completed 项") }
+            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -424,4 +439,21 @@ class CalendarViewModel(
             is InterruptedIOException -> "DeepSeek 响应超时，请检查网络后重试。"
             else -> message?.takeIf { it.isNotBlank() } ?: "解析失败，请稍后再试。"
         }
+
+    private fun DraftCalendarEvent.expandRepeats(): List<DraftCalendarEvent> {
+        val repeat = repeatRule ?: return listOf(this)
+        val start = startAt ?: return listOf(this)
+        val count = repeat.normalizedCount
+        return (0 until count).map { index ->
+            val offset = when (repeat.frequency) {
+                RepeatFrequency.DAILY -> Duration.ofDays(index.toLong())
+                RepeatFrequency.WEEKLY -> Duration.ofDays(index.toLong() * 7)
+            }
+            copy(
+                startAt = start.plus(offset),
+                endAt = endAt?.plus(offset),
+                notes = listOfNotNull(notes, repeat.summary()).joinToString("\n").takeIf { it.isNotBlank() },
+            )
+        }
+    }
 }

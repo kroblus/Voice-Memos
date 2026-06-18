@@ -34,6 +34,17 @@ interface CalendarEventDao {
     )
     fun observeAllActive(): Flow<List<CalendarEventEntity>>
 
+    @Query(
+        """
+        SELECT * FROM calendar_events
+        WHERE status = 'SCHEDULED'
+        AND startAtEpochMillis >= :nowEpochMillis
+        ORDER BY startAtEpochMillis ASC
+        LIMIT 1
+        """,
+    )
+    suspend fun nextScheduled(nowEpochMillis: Long): CalendarEventEntity?
+
     @Query("UPDATE calendar_events SET status = :status, updatedAtEpochMillis = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, updatedAt: Long)
 
@@ -66,4 +77,7 @@ interface CalendarEventDao {
 
     @Query("DELETE FROM calendar_events WHERE status = :status")
     suspend fun deleteByStatus(status: String)
+
+    @Query("SELECT COUNT(*) FROM calendar_events WHERE title = :title")
+    suspend fun countByTitle(title: String): Int
 }

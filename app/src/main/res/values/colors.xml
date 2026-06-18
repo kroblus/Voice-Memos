@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#F4F1EA</color>
+    <color name="widget_surface">#FFFCF6</color>
+    <color name="widget_primary">#215C5A</color>
+    <color name="widget_on_primary">#FFFFFFFF</color>
+    <color name="widget_on_surface">#111A1C</color>
+    <color name="widget_on_surface_variant">#596465</color>
 </resources>
-

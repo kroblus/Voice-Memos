@@ -63,4 +63,31 @@ class AiResponseMapperTest {
         assertEquals(listOf("start_local"), result.events.single().missingFields)
         assertTrue(result.needsConfirmation)
     }
+
+    @Test
+    fun mapsRepeatRuleWhenAiReturnsRecurringFields() {
+        val result = AiResponseMapper.map(
+            response = AiCalendarResponse(
+                events = listOf(
+                    AiCalendarEvent(
+                        title = "喝水",
+                        startLocal = "2026-06-17T09:00:00",
+                        repeatFrequency = "daily",
+                        repeatCount = 5,
+                        confidence = 0.9,
+                    ),
+                ),
+            ),
+            transcript = "每天九点提醒我喝水",
+            zoneId = zone,
+            defaultDurationMinutes = 30,
+            defaultReminderMinutes = 10,
+        )
+
+        val draft = result.events.single()
+        assertEquals("喝水", draft.title)
+        assertEquals("每天，共 5 次", draft.repeatRule?.summary())
+        assertEquals(listOf(0, 10), draft.reminderMinutes)
+        assertTrue(draft.canCreate)
+    }
 }

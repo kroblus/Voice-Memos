@@ -17,6 +17,10 @@ object DeepSeekPrompt {
         Do not invent dates or times. If a required field is unclear, leave it null and add the field name to missing_fields.
         If duration is not stated, use the default duration from the user message.
         If reminder lead time is not stated, use the default reminder minutes from the user message.
+        For recurring phrases, keep one event object and set repeat fields:
+        - "每天", "每日", "every day", or "daily": repeat_frequency "daily"; repeat_count 7 unless the user gave a count.
+        - "每周", "weekly", or a weekly weekday pattern: repeat_frequency "weekly"; repeat_count 8 unless the user gave a count.
+        - Non-recurring events: repeat_frequency null and repeat_count null.
         Required json shape:
         {
           "events": [
@@ -27,6 +31,8 @@ object DeepSeekPrompt {
               "end_local": "YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD for all-day or null",
               "all_day": false,
               "reminder_minutes": [10],
+              "repeat_frequency": null,
+              "repeat_count": null,
               "confidence": 0.0,
               "missing_fields": []
             }

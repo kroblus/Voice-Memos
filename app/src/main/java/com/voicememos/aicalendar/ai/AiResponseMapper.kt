@@ -2,6 +2,8 @@ package com.voicememos.aicalendar.ai
 
 import com.voicememos.aicalendar.domain.AiParseResult
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
+import com.voicememos.aicalendar.domain.RepeatFrequency
+import com.voicememos.aicalendar.domain.RepeatRule
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -46,6 +48,7 @@ object AiResponseMapper {
                 sourceTranscript = transcript,
                 aiConfidence = event.confidence.coerceIn(0.0, 1.0),
                 missingFields = missing.sorted(),
+                repeatRule = event.toRepeatRule(),
             )
         }
 
@@ -89,4 +92,20 @@ object AiResponseMapper {
                 null
             }
         }
+
+    private fun AiCalendarEvent.toRepeatRule(): RepeatRule? {
+        val frequency = when (repeatFrequency?.trim()?.lowercase()) {
+            "daily", "day", "每天" -> RepeatFrequency.DAILY
+            "weekly", "week", "每周" -> RepeatFrequency.WEEKLY
+            else -> return null
+        }
+        val defaultCount = when (frequency) {
+            RepeatFrequency.DAILY -> 7
+            RepeatFrequency.WEEKLY -> 8
+        }
+        return RepeatRule(
+            frequency = frequency,
+            count = repeatCount ?: defaultCount,
+        )
+    }
 }

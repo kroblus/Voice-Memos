@@ -1,6 +1,7 @@
 package com.voicememos.aicalendar
 
 import android.Manifest
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsDisplayed
@@ -17,6 +18,8 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToString
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.rule.GrantPermissionRule
+import com.voicememos.aicalendar.data.AppDatabase
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -67,6 +70,36 @@ class VoiceCalendarFlowTest {
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("settings-clear-key-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
+    }
+
+    @Test
+    fun mockDailyRepeatCreatesMultipleLocalEvents() {
+        composeRule.onNodeWithTag("settings-button").performClick()
+        composeRule.waitUntilNodeExists("api-key-field")
+        composeRule.onNodeWithTag("api-key-field").performTextReplacement("mock-deepseek")
+        closeSoftKeyboard()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings-save-button").performClick()
+        composeRule.waitUntilNodeDoesNotExist("api-key-field")
+
+        composeRule.onNodeWithTag("transcript-field")
+            .performTextReplacement("每天9点提醒我喝水")
+        closeSoftKeyboard()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("generate-button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+
+        composeRule.waitUntilNodeExists("draft-panel")
+        composeRule.assertAnyTextDisplayed("喝水")
+        composeRule.assertAnyTextContains("每天，共 7 次")
+        composeRule.saveAllDrafts()
+
+        val savedCount = runBlocking {
+            AppDatabase.get(ApplicationProvider.getApplicationContext())
+                .calendarEventDao()
+                .countByTitle("喝水")
+        }
+        assertTrue("Expected at least 7 repeated events, found $savedCount", savedCount >= 7)
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertInputActionButtonsDoNotOverlap() {
@@ -148,5 +181,14 @@ class VoiceCalendarFlowTest {
         text: String,
     ) {
         onAllNodesWithText(text).onFirst().assertExists()
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertAnyTextContains(
+        text: String,
+    ) {
+        assertTrue(
+            "Expected at least one node containing text '$text'.",
+            onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty(),
+        )
     }
 }

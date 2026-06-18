@@ -2,6 +2,8 @@ package com.voicememos.aicalendar.ui
 
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
+import com.voicememos.aicalendar.domain.RepeatFrequency
+import com.voicememos.aicalendar.domain.RepeatRule
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -58,6 +60,8 @@ data class DraftEditor(
     val sourceTranscript: String,
     val aiConfidence: Double,
     val missingFields: List<String>,
+    val repeatFrequency: RepeatFrequency? = null,
+    val repeatCount: String = "",
     val expanded: Boolean = false,
 ) {
     fun toDraft(zoneId: ZoneId): DraftCalendarEvent {
@@ -82,6 +86,15 @@ data class DraftEditor(
             sourceTranscript = sourceTranscript,
             aiConfidence = aiConfidence,
             missingFields = missing.sorted(),
+            repeatRule = repeatFrequency?.let { frequency ->
+                RepeatRule(
+                    frequency = frequency,
+                    count = repeatCount.toIntOrNull() ?: when (frequency) {
+                        RepeatFrequency.DAILY -> 7
+                        RepeatFrequency.WEEKLY -> 8
+                    },
+                )
+            },
         )
     }
 }
@@ -98,6 +111,8 @@ fun DraftCalendarEvent.toEditor(zoneId: ZoneId): DraftEditor =
         sourceTranscript = sourceTranscript,
         aiConfidence = aiConfidence,
         missingFields = missingFields,
+        repeatFrequency = repeatRule?.frequency,
+        repeatCount = repeatRule?.normalizedCount?.toString().orEmpty(),
     )
 
 data class EventEditor(

@@ -17,7 +17,8 @@ data class AiCalendarEvent(
     @SerialName("end_local") val endLocal: String? = null,
     @SerialName("all_day") val allDay: Boolean = false,
     @SerialName("reminder_minutes") val reminderMinutes: List<Int> = emptyList(),
+    @SerialName("repeat_frequency") val repeatFrequency: String? = null,
+    @SerialName("repeat_count") val repeatCount: Int? = null,
     val confidence: Double = 0.0,
     @SerialName("missing_fields") val missingFields: List<String> = emptyList(),
 )
-

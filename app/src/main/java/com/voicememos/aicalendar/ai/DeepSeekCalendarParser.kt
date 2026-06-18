@@ -165,6 +165,36 @@ class DeepSeekCalendarParser(
                     missingFields = emptyList(),
                 ),
             )
+        } else if (normalizedTranscript.contains("每天")) {
+            listOf(
+                AiCalendarEvent(
+                    title = "喝水",
+                    notes = "由 mock DeepSeek 回应生成",
+                    startLocal = "${baseDate}T09:00:00",
+                    endLocal = "${baseDate}T09:30:00",
+                    allDay = false,
+                    reminderMinutes = listOf(defaultReminderMinutes),
+                    repeatFrequency = "daily",
+                    repeatCount = 7,
+                    confidence = 0.94,
+                    missingFields = emptyList(),
+                ),
+            )
+        } else if (normalizedTranscript.contains("每周")) {
+            listOf(
+                AiCalendarEvent(
+                    title = "项目复盘",
+                    notes = "由 mock DeepSeek 回应生成",
+                    startLocal = "${baseDate}T10:00:00",
+                    endLocal = "${baseDate}T10:30:00",
+                    allDay = false,
+                    reminderMinutes = listOf(defaultReminderMinutes),
+                    repeatFrequency = "weekly",
+                    repeatCount = 8,
+                    confidence = 0.93,
+                    missingFields = emptyList(),
+                ),
+            )
         } else {
             listOf(
                 AiCalendarEvent(

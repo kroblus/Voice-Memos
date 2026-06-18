@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">声历</string>
+    <string name="widget_label">下一项</string>
+    <string name="widget_empty_title">今天还很清爽</string>
+    <string name="widget_empty_subtitle">打开声历说一句</string>
+    <string name="widget_voice_entry">说一句</string>
+    <string name="widget_description">显示声历的下一项日程</string>
 </resources>
-

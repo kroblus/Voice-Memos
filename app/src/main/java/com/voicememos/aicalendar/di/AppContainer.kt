@@ -26,6 +26,7 @@ class AppContainer(context: Context) {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 if (modelClass.isAssignableFrom(CalendarViewModel::class.java)) {
                     return CalendarViewModel(
+                        appContext = appContext,
                         calendarRepository = calendarRepository,
                         settingsRepository = settingsRepository,
                         secureApiKeyStore = secureApiKeyStore,
@@ -37,4 +38,3 @@ class AppContainer(context: Context) {
             }
         }
 }
-
