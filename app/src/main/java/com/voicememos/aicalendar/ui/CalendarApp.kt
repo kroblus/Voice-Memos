@@ -47,7 +47,6 @@ import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Today
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -85,6 +84,7 @@ import com.voicememos.aicalendar.data.exportEventsIcs
 import com.voicememos.aicalendar.data.exportEventsJson
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.speech.SpeechInputController
 import com.voicememos.aicalendar.ui.theme.ShengliTheme
@@ -148,6 +148,8 @@ private fun CalendarWorkbench(
                 state = state,
                 onTextChanged = viewModel::updateTextInput,
                 onReuseTranscript = viewModel::reuseTranscript,
+                onRegenerateTranscript = viewModel::regenerateTranscript,
+                onClearHistory = viewModel::clearParseHistory,
                 onSubmit = viewModel::parseCurrentText,
                 onVoiceInput = {
                     if (state.isListening) {
@@ -948,6 +950,8 @@ private fun ComposerBar(
     state: CalendarUiState,
     onTextChanged: (String) -> Unit,
     onReuseTranscript: (String) -> Unit,
+    onRegenerateTranscript: (String) -> Unit,
+    onClearHistory: () -> Unit,
     onSubmit: () -> Unit,
     onVoiceInput: () -> Unit,
     modifier: Modifier = Modifier,
@@ -976,24 +980,16 @@ private fun ComposerBar(
                 minLines = 2,
                 maxLines = 4,
             )
-            if (state.recentTranscripts.isNotEmpty() &&
+            if (state.parseHistory.isNotEmpty() &&
                 state.textInput.isBlank() &&
                 state.partialTranscript.isBlank()
             ) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(state.recentTranscripts) { transcript ->
-                        AssistChip(
-                            onClick = { onReuseTranscript(transcript) },
-                            label = {
-                                Text(
-                                    transcript,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                        )
-                    }
-                }
+                ParseHistoryStrip(
+                    history = state.parseHistory,
+                    onReuseTranscript = onReuseTranscript,
+                    onRegenerateTranscript = onRegenerateTranscript,
+                    onClearHistory = onClearHistory,
+                )
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1032,6 +1028,93 @@ private fun ComposerBar(
             }
         }
     }
+}
+
+@Composable
+private fun ParseHistoryStrip(
+    history: List<ParseHistoryItem>,
+    onReuseTranscript: (String) -> Unit,
+    onRegenerateTranscript: (String) -> Unit,
+    onClearHistory: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "复核历史",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
+                onClick = onClearHistory,
+                modifier = Modifier.testTag("parse-history-clear-button"),
+            ) {
+                Text("清空")
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(history, key = { it.id }) { item ->
+                Column(
+                    modifier = Modifier
+                        .width(248.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.background)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                        .padding(10.dp)
+                        .testTag("parse-history-row"),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        item.transcript,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        item.summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        item.metaLabel(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(
+                            onClick = { onReuseTranscript(item.transcript) },
+                            modifier = Modifier.testTag("parse-history-reuse-button"),
+                        ) {
+                            Text("填入")
+                        }
+                        TextButton(
+                            onClick = { onRegenerateTranscript(item.transcript) },
+                            modifier = Modifier.testTag("parse-history-regenerate-button"),
+                        ) {
+                            Text("重生成")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun ParseHistoryItem.metaLabel(): String {
+    val time = java.time.Instant.ofEpochMilli(createdAtEpochMillis)
+        .atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE))
+    val count = if (draftCount > 0) "$draftCount 项" else "无草稿"
+    return "$time · $count"
 }
 
 @Composable

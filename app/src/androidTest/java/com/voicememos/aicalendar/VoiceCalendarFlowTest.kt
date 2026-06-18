@@ -58,14 +58,17 @@ class VoiceCalendarFlowTest {
             .performSemanticsAction(SemanticsActions.OnClick)
 
         composeRule.waitUntilNodeExists("draft-panel")
-        composeRule.assertAnyTextDisplayed("打开电脑")
-        composeRule.assertAnyTextExists("打开手机")
+        composeRule.waitUntilAnyTextContains("打开电脑")
+        composeRule.assertAnyTextContains("打开手机")
 
         composeRule.saveAllDrafts()
 
-        composeRule.assertAnyTextDisplayed("打开电脑")
+        composeRule.waitUntilAnyTextContains("打开电脑")
         composeRule.scrollEventListToText("打开手机")
-        composeRule.assertAnyTextDisplayed("打开手机")
+        composeRule.assertAnyTextContains("打开手机")
+        composeRule.onAllNodesWithTag("parse-history-row").onFirst().assertIsDisplayed()
+        composeRule.onAllNodesWithTag("parse-history-reuse-button").onFirst().assertIsDisplayed()
+        composeRule.onAllNodesWithTag("parse-history-regenerate-button").onFirst().assertIsDisplayed()
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
@@ -221,5 +224,14 @@ class VoiceCalendarFlowTest {
             "Expected at least one node containing text '$text'.",
             onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty(),
         )
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilAnyTextContains(
+        text: String,
+        timeoutMillis: Long = 10_000,
+    ) {
+        waitUntil(timeoutMillis) {
+            onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 }

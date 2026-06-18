@@ -8,6 +8,7 @@ import com.voicememos.aicalendar.data.CalendarRepository
 import com.voicememos.aicalendar.data.SettingsRepository
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.reminder.ReminderScheduler
 import com.voicememos.aicalendar.security.SecureApiKeyStore
@@ -16,6 +17,7 @@ import java.io.InterruptedIOException
 import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,6 +73,13 @@ class CalendarViewModel(
                     }
                 }
         }
+        viewModelScope.launch {
+            settingsRepository.observeParseHistory()
+                .distinctUntilChanged()
+                .collect { history ->
+                    _uiState.update { it.copy(parseHistory = history) }
+                }
+        }
     }
 
     fun selectDate(date: LocalDate) {
@@ -98,6 +107,11 @@ class CalendarViewModel(
 
     fun reuseTranscript(value: String) {
         _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
+    }
+
+    fun regenerateTranscript(value: String) {
+        _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
+        parseText(value)
     }
 
     fun onListeningChanged(value: Boolean) {
@@ -154,6 +168,7 @@ class CalendarViewModel(
                     zoneId = zoneId,
                 )
             }.onSuccess { result ->
+                settingsRepository.addParseHistory(result.toHistoryItem(transcript))
                 _uiState.update {
                     it.copy(
                         isParsing = false,
@@ -165,10 +180,6 @@ class CalendarViewModel(
                         } else {
                             null
                         },
-                        recentTranscripts = it.recentTranscripts
-                            .filterNot { recent -> recent == transcript }
-                            .let { recent -> listOf(transcript) + recent }
-                            .take(3),
                     )
                 }
             }.onFailure { error ->
@@ -374,6 +385,13 @@ class CalendarViewModel(
         }
     }
 
+    fun clearParseHistory() {
+        viewModelScope.launch {
+            settingsRepository.clearParseHistory()
+            _uiState.update { it.copy(successMessage = "复核历史已清空") }
+        }
+    }
+
     fun openSettings() {
         _uiState.update { it.copy(showSettings = true, apiKeyInput = "") }
     }
@@ -439,6 +457,27 @@ class CalendarViewModel(
             is InterruptedIOException -> "DeepSeek 响应超时，请检查网络后重试。"
             else -> message?.takeIf { it.isNotBlank() } ?: "解析失败，请稍后再试。"
         }
+
+    private fun com.voicememos.aicalendar.domain.AiParseResult.toHistoryItem(transcript: String): ParseHistoryItem {
+        val titleSummary = events
+            .map { it.title.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(3)
+            .joinToString("、")
+        val extraCount = (events.size - 3).takeIf { it > 0 }?.let { " 等 $it 项" }.orEmpty()
+        return ParseHistoryItem(
+            id = UUID.randomUUID().toString(),
+            transcript = transcript,
+            summary = when {
+                titleSummary.isNotBlank() -> titleSummary + extraCount
+                warnings.isNotEmpty() -> warnings.first()
+                else -> "未生成可保存草稿"
+            },
+            draftCount = events.size,
+            createdAtEpochMillis = System.currentTimeMillis(),
+        )
+    }
 
     private fun DraftCalendarEvent.expandRepeats(): List<DraftCalendarEvent> {
         val repeat = repeatRule ?: return listOf(this)

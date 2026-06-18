@@ -2,6 +2,7 @@ package com.voicememos.aicalendar.ui
 
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
+import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.domain.RepeatRule
 import java.time.Instant
@@ -46,7 +47,7 @@ data class CalendarUiState(
     val agendaQuery: String = "",
     val agendaFilter: AgendaFilter = AgendaFilter.ALL,
     val eventEditor: EventEditor? = null,
-    val recentTranscripts: List<String> = emptyList(),
+    val parseHistory: List<ParseHistoryItem> = emptyList(),
 )
 
 data class DraftEditor(

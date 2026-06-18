@@ -1,6 +1,8 @@
 package com.voicememos.aicalendar.data
 
+import com.voicememos.aicalendar.domain.ParseHistoryItem
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 class SettingsRepository(
     private val dao: AppSettingDao,
@@ -10,6 +12,9 @@ class SettingsRepository(
     fun observeDefaultDurationMinutes(): Flow<String?> = dao.observeValue(DEFAULT_DURATION_MINUTES)
 
     fun observeThemeMode(): Flow<String?> = dao.observeValue(THEME_MODE)
+
+    fun observeParseHistory(): Flow<List<ParseHistoryItem>> =
+        dao.observeValue(PARSE_HISTORY).map(::decodeParseHistory)
 
     suspend fun setThemeMode(value: String) {
         dao.set(AppSettingEntity(THEME_MODE, value))
@@ -29,9 +34,22 @@ class SettingsRepository(
         dao.set(AppSettingEntity(DEFAULT_DURATION_MINUTES, value.coerceAtLeast(1).toString()))
     }
 
+    suspend fun addParseHistory(item: ParseHistoryItem) {
+        val existing = decodeParseHistory(dao.getValue(PARSE_HISTORY))
+        val updated = (listOf(item) + existing.filterNot { it.transcript == item.transcript })
+            .take(MAX_PARSE_HISTORY)
+        dao.set(AppSettingEntity(PARSE_HISTORY, encodeParseHistory(updated)))
+    }
+
+    suspend fun clearParseHistory() {
+        dao.set(AppSettingEntity(PARSE_HISTORY, encodeParseHistory(emptyList())))
+    }
+
     private companion object {
         const val DEFAULT_REMINDER_MINUTES = "default_reminder_minutes"
         const val DEFAULT_DURATION_MINUTES = "default_duration_minutes"
         const val THEME_MODE = "theme_mode"
+        const val PARSE_HISTORY = "parse_history"
+        const val MAX_PARSE_HISTORY = 5
     }
 }
