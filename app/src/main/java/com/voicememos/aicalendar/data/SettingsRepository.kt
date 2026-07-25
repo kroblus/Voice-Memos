@@ -1,6 +1,7 @@
 package com.voicememos.aicalendar.data
 
 import com.voicememos.aicalendar.domain.ParseHistoryItem
+import com.voicememos.aicalendar.domain.ParseHistoryCreationStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -43,9 +44,63 @@ class SettingsRepository(
 
     suspend fun addParseHistory(item: ParseHistoryItem) {
         val existing = decodeParseHistory(dao.getValue(PARSE_HISTORY))
-        val updated = (listOf(item) + existing.filterNot { it.transcript == item.transcript })
+        val updated = (
+            listOf(item) + existing.filterNot {
+                it.id == item.id || it.transcript == item.transcript
+            }
+        )
             .take(MAX_PARSE_HISTORY)
         dao.set(AppSettingEntity(PARSE_HISTORY, encodeParseHistory(updated)))
+    }
+
+    suspend fun deleteParseHistory(id: String) {
+        updateParseHistory { history -> history.filterNot { it.id == id } }
+    }
+
+    suspend fun updateParseHistoryCreationResult(
+        id: String,
+        status: ParseHistoryCreationStatus,
+        createdItemIds: List<String> = emptyList(),
+        failureReason: String? = null,
+    ) {
+        updateParseHistory { history ->
+            history.map { item ->
+                if (item.id != id) {
+                    item
+                } else {
+                    item.copy(
+                        creationStatus = status,
+                        createdItemIds = when (status) {
+                            ParseHistoryCreationStatus.NOT_ATTEMPTED,
+                            ParseHistoryCreationStatus.FAILURE,
+                            -> emptyList()
+
+                            ParseHistoryCreationStatus.SUCCESS,
+                            ParseHistoryCreationStatus.PARTIAL_SUCCESS,
+                            -> createdItemIds.filter(String::isNotBlank).distinct()
+                        },
+                        failureReason = when (status) {
+                            ParseHistoryCreationStatus.NOT_ATTEMPTED,
+                            ParseHistoryCreationStatus.SUCCESS,
+                            -> null
+
+                            ParseHistoryCreationStatus.FAILURE,
+                            ParseHistoryCreationStatus.PARTIAL_SUCCESS,
+                            -> failureReason?.takeIf(String::isNotBlank)
+                        },
+                        isUndone = false,
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun updateParseHistoryUndone(id: String, isUndone: Boolean) {
+        updateParseHistory { history ->
+            history.map { item ->
+                if (item.id == id) item.copy(isUndone = isUndone) else item
+            }
+        }
     }
 
     suspend fun clearParseHistory() {
@@ -56,12 +111,22 @@ class SettingsRepository(
         dao.deleteAll()
     }
 
+    private suspend fun updateParseHistory(
+        transform: (List<ParseHistoryItem>) -> List<ParseHistoryItem>,
+    ) {
+        val existing = decodeParseHistory(dao.getValue(PARSE_HISTORY))
+        val updated = transform(existing).take(MAX_PARSE_HISTORY)
+        if (updated != existing) {
+            dao.set(AppSettingEntity(PARSE_HISTORY, encodeParseHistory(updated)))
+        }
+    }
+
     private companion object {
         const val DEFAULT_REMINDER_MINUTES = "default_reminder_minutes"
         const val DEFAULT_DURATION_MINUTES = "default_duration_minutes"
         const val THEME_MODE = "theme_mode"
         const val ONBOARDING_SEEN = "onboarding_seen"
         const val PARSE_HISTORY = "parse_history"
-        const val MAX_PARSE_HISTORY = 5
+        const val MAX_PARSE_HISTORY = 50
     }
 }

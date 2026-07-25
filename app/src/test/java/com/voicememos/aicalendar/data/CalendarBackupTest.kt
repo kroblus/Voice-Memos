@@ -2,6 +2,10 @@ package com.voicememos.aicalendar.data
 
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.SyncStatus
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,13 +28,46 @@ class CalendarBackupTest {
         )
         val decoded = decodeCalendarBackup(backup)
 
-        assertTrue(backup.contains("\"schemaVersion\": 1"))
+        assertTrue(backup.contains("\"schemaVersion\": 2"))
         assertTrue(backup.contains("\"exportedAt\": \"2026-06-18T00:00:00Z\""))
         assertFalse(backup.contains("deepseek"))
         assertFalse(backup.contains("apiKey"))
         assertEquals(1, decoded.events.size)
         assertEquals("项目会", decoded.events.single().title)
         assertEquals(listOf(0, 10), decoded.events.single().reminderMinutes)
+    }
+
+    @Test
+    fun backupV2RoundTripsTypedTodoAndSyncFields() {
+        val dueAt = Instant.parse("2026-07-31T09:00:00Z")
+        val event = CalendarEvent(
+            id = "todo-1",
+            title = "提交申请",
+            notes = "准备附件",
+            startAt = dueAt,
+            endAt = null,
+            allDay = false,
+            reminderMinutes = listOf(0, 30),
+            status = EventStatus.SCHEDULED,
+            sourceTranscript = "周五前提交申请",
+            aiConfidence = 0.88,
+            itemType = ScheduleItemType.TODO,
+            dueAt = dueAt,
+            location = "办公室",
+            recurrenceRule = "FREQ=WEEKLY;COUNT=2",
+            priority = ScheduleItemPriority.HIGH,
+            notificationStatus = NotificationStatus.SCHEDULED,
+            syncStatus = SyncStatus.SYNCED,
+            externalCalendarEventId = "external-7",
+            creationKey = "session-7:item-2",
+        )
+
+        val backup = exportCalendarBackup(listOf(event))
+        val restored = decodeCalendarBackup(backup).events.single()
+
+        assertTrue(backup.contains("\"itemType\": \"TODO\""))
+        assertTrue(backup.contains("\"creationKey\": \"session-7:item-2\""))
+        assertEquals(event, restored)
     }
 
     @Test
@@ -57,6 +94,9 @@ class CalendarBackupTest {
         assertEquals(1, decoded.events.size)
         assertEquals(0, decoded.skippedCount)
         assertEquals(listOf(0, 10, 20), decoded.events.single().reminderMinutes)
+        assertEquals(ScheduleItemType.EVENT, decoded.events.single().itemType)
+        assertEquals(NotificationStatus.PENDING, decoded.events.single().notificationStatus)
+        assertEquals(SyncStatus.LOCAL_ONLY, decoded.events.single().syncStatus)
     }
 
     @Test

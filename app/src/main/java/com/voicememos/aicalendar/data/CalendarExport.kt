@@ -23,7 +23,17 @@ fun exportEventsJson(events: List<CalendarEvent>): String =
         |    "reminderMinutes": [${event.reminderMinutes.joinToString(",")}],
         |    "status": "${event.status.name}",
         |    "sourceTranscript": ${event.sourceTranscript?.let { "\"${it.escapeJson()}\"" } ?: "null"},
-        |    "aiConfidence": ${event.aiConfidence}
+        |    "aiConfidence": ${event.aiConfidence},
+        |    "itemType": "${event.itemType.name}",
+        |    "triggerAt": ${event.triggerAt?.let { "\"$it\"" } ?: "null"},
+        |    "dueAt": ${event.dueAt?.let { "\"$it\"" } ?: "null"},
+        |    "location": ${event.location?.let { "\"${it.escapeJson()}\"" } ?: "null"},
+        |    "recurrenceRule": ${event.recurrenceRule?.let { "\"${it.escapeJson()}\"" } ?: "null"},
+        |    "priority": ${event.priority?.let { "\"${it.name}\"" } ?: "null"},
+        |    "notificationStatus": "${event.notificationStatus.name}",
+        |    "syncStatus": "${event.syncStatus.name}",
+        |    "externalCalendarEventId": ${event.externalCalendarEventId?.let { "\"${it.escapeJson()}\"" } ?: "null"},
+        |    "creationKey": ${event.creationKey?.let { "\"${it.escapeJson()}\"" } ?: "null"}
         |  }
         """.trimMargin()
     }
@@ -56,9 +66,13 @@ fun exportEventsIcs(
             event.endAt?.let { lines += "DTEND:${IcsDateTimeFormatter.format(it)}" }
         }
         lines += "SUMMARY:${event.title.escapeIcs()}"
+        event.location?.takeIf(String::isNotBlank)?.let { lines += "LOCATION:${it.escapeIcs()}" }
         event.descriptionForExport()?.let { lines += "DESCRIPTION:${it.escapeIcs()}" }
+        event.recurrenceRule?.takeIf(String::isNotBlank)?.let { lines += "RRULE:${it.sanitizeIcsRule()}" }
         lines += "STATUS:CONFIRMED"
         lines += "X-SHENGLI-STATUS:${event.status.name}"
+        lines += "X-SHENGLI-TYPE:${event.itemType.name}"
+        event.priority?.let { lines += "X-SHENGLI-PRIORITY:${it.name}" }
         event.reminderMinutes.distinct().sorted().forEach { minutes ->
             lines += "BEGIN:VALARM"
             lines += "ACTION:DISPLAY"
@@ -103,6 +117,8 @@ private fun String.escapeIcs(): String =
         .replace("\n", "\\n")
         .replace(";", "\\;")
         .replace(",", "\\,")
+
+private fun String.sanitizeIcsRule(): String = replace("\r", "").replace("\n", "")
 
 private fun String.foldIcsLine(): String =
     if (length <= IcsFoldLimit) {

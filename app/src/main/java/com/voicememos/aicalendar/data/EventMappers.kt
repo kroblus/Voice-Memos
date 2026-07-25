@@ -3,6 +3,10 @@ package com.voicememos.aicalendar.data
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.SyncStatus
 import java.time.Instant
 import java.util.UUID
 
@@ -18,10 +22,25 @@ fun CalendarEventEntity.toDomain(): CalendarEvent =
         status = runCatching { EventStatus.valueOf(status) }.getOrDefault(EventStatus.SCHEDULED),
         sourceTranscript = sourceTranscript,
         aiConfidence = aiConfidence,
+        itemType = itemType.toEnumOrDefault(ScheduleItemType.EVENT),
+        triggerAt = triggerAtEpochMillis?.let(Instant::ofEpochMilli),
+        dueAt = dueAtEpochMillis?.let(Instant::ofEpochMilli),
+        location = location,
+        recurrenceRule = recurrenceRule,
+        priority = priority?.toEnumOrNull<ScheduleItemPriority>(),
+        notificationStatus = notificationStatus.toEnumOrDefault(NotificationStatus.PENDING),
+        syncStatus = syncStatus.toEnumOrDefault(SyncStatus.LOCAL_ONLY),
+        externalCalendarEventId = externalCalendarEventId,
+        creationKey = creationKey,
     )
 
-fun DraftCalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEntity {
-    val start = requireNotNull(startAt) { "Draft must have startAt before it can be persisted." }
+fun DraftCalendarEvent.toEntity(
+    now: Instant = Instant.now(),
+    creationKey: String? = null,
+): CalendarEventEntity {
+    val start = requireNotNull(startAt ?: triggerAt ?: dueAt) {
+        "Draft must have startAt, triggerAt, or dueAt before it can be persisted."
+    }
     return CalendarEventEntity(
         id = UUID.randomUUID().toString(),
         title = title.trim(),
@@ -30,11 +49,25 @@ fun DraftCalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEnti
         endAtEpochMillis = endAt?.toEpochMilli(),
         allDay = allDay,
         reminderMinutesCsv = reminderMinutes.toReminderCsv(),
-        status = EventStatus.SCHEDULED.name,
+        status = if (itemType == ScheduleItemType.TODO && completed) {
+            EventStatus.DONE.name
+        } else {
+            EventStatus.SCHEDULED.name
+        },
         sourceTranscript = sourceTranscript,
-        aiConfidence = aiConfidence,
+        aiConfidence = aiConfidence.coerceIn(0.0, 1.0),
         createdAtEpochMillis = now.toEpochMilli(),
         updatedAtEpochMillis = now.toEpochMilli(),
+        itemType = itemType.name,
+        triggerAtEpochMillis = triggerAt?.toEpochMilli(),
+        dueAtEpochMillis = dueAt?.toEpochMilli(),
+        location = location.normalized(),
+        recurrenceRule = recurrenceRule.normalized(),
+        priority = priority?.name,
+        notificationStatus = NotificationStatus.PENDING.name,
+        syncStatus = SyncStatus.LOCAL_ONLY.name,
+        externalCalendarEventId = null,
+        creationKey = creationKey.normalized(),
     )
 }
 
@@ -52,6 +85,16 @@ fun CalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEntity =
         aiConfidence = aiConfidence.coerceIn(0.0, 1.0),
         createdAtEpochMillis = now.toEpochMilli(),
         updatedAtEpochMillis = now.toEpochMilli(),
+        itemType = itemType.name,
+        triggerAtEpochMillis = triggerAt?.toEpochMilli(),
+        dueAtEpochMillis = dueAt?.toEpochMilli(),
+        location = location.normalized(),
+        recurrenceRule = recurrenceRule.normalized(),
+        priority = priority?.name,
+        notificationStatus = notificationStatus.name,
+        syncStatus = syncStatus.name,
+        externalCalendarEventId = externalCalendarEventId.normalized(),
+        creationKey = creationKey.normalized(),
     )
 
 fun List<Int>.toReminderCsv(): String =
@@ -68,3 +111,11 @@ fun String.toReminderMinutes(): List<Int> =
         .filter { it >= 0 }
         .distinct()
         .sorted()
+
+private inline fun <reified T : Enum<T>> String.toEnumOrDefault(default: T): T =
+    enumValues<T>().firstOrNull { it.name == this } ?: default
+
+private inline fun <reified T : Enum<T>> String.toEnumOrNull(): T? =
+    enumValues<T>().firstOrNull { it.name == this }
+
+private fun String?.normalized(): String? = this?.trim()?.takeIf(String::isNotEmpty)

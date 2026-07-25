@@ -72,10 +72,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -89,8 +94,14 @@ import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
 import com.voicememos.aicalendar.speech.SpeechInputController
+import com.voicememos.aicalendar.ui.session.VoiceTaskState
 import com.voicememos.aicalendar.ui.theme.ShengliTheme
+import kotlinx.coroutines.delay
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -235,9 +246,6 @@ private fun CalendarWorkbench(
             VoiceInputCurtain(
                 state = state,
                 onTextChanged = viewModel::updateTextInput,
-                onReuseTranscript = viewModel::reuseTranscript,
-                onRegenerateTranscript = viewModel::regenerateTranscript,
-                onClearHistory = viewModel::clearParseHistory,
                 onSubmit = viewModel::parseCurrentText,
                 onVoiceInput = toggleVoiceInput,
                 onDismiss = dismissInputCurtain,
@@ -310,7 +318,7 @@ private fun CalendarWorkbench(
             shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
         ) {
             DraftPanel(
-                drafts = state.draftEditors,
+                state = state,
                 onUpdate = viewModel::updateDraft,
                 onConfirmAll = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1203,14 +1211,94 @@ private fun VoiceInputFab(
 private fun VoiceInputCurtain(
     state: CalendarUiState,
     onTextChanged: (String) -> Unit,
-    onReuseTranscript: (String) -> Unit,
-    onRegenerateTranscript: (String) -> Unit,
-    onClearHistory: () -> Unit,
     onSubmit: () -> Unit,
     onVoiceInput: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val taskState = state.voiceTaskState
     val transcript = state.partialTranscript.ifBlank { state.textInput }
+    val listeningStartedAt = state.voiceSession.listeningStartedAt
+    var clockMillis by remember(state.voiceSession.sessionId, listeningStartedAt) {
+        mutableLongStateOf(System.currentTimeMillis())
+    }
+    LaunchedEffect(taskState, listeningStartedAt) {
+        while (taskState == VoiceTaskState.Listening && listeningStartedAt != null) {
+            clockMillis = System.currentTimeMillis()
+            delay(250)
+        }
+    }
+    val elapsedSeconds = listeningStartedAt
+        ?.let { startedAt ->
+            Duration.between(startedAt, Instant.ofEpochMilli(clockMillis))
+                .seconds
+                .coerceAtLeast(0)
+        }
+        ?: 0L
+    val title = when (taskState) {
+        VoiceTaskState.Idle -> "说出安排"
+        VoiceTaskState.Listening -> "正在听"
+        VoiceTaskState.Transcribing -> "正在完成转写"
+        VoiceTaskState.TranscriptReady -> "确认转写"
+        VoiceTaskState.Parsing -> "正在整理"
+        VoiceTaskState.NeedsClarification -> "还需补充信息"
+        VoiceTaskState.Preview -> "日程预览已就绪"
+        VoiceTaskState.Saving -> "正在创建"
+        VoiceTaskState.Success -> "创建完成"
+        VoiceTaskState.PartialSuccess -> "部分项目已创建"
+        VoiceTaskState.Failure -> "这次没有完成"
+    }
+    val subtitle = when (taskState) {
+        VoiceTaskState.Idle -> "一句话可以拆成多个事件、提醒或待办"
+        VoiceTaskState.Listening -> "说完后点“完成录音”，转写不会自动创建日程"
+        VoiceTaskState.Transcribing -> "正在等待最终识别结果"
+        VoiceTaskState.TranscriptReady -> "可以先修改文字，确认后再整理日程"
+        VoiceTaskState.Parsing -> "正在识别时间、类型和提醒方式"
+        VoiceTaskState.NeedsClarification -> "请在预览中补齐标出的关键信息"
+        VoiceTaskState.Preview -> "请逐项检查，确认无误后再创建"
+        VoiceTaskState.Saving -> "正在保存并安排提醒"
+        VoiceTaskState.Success -> "所有项目都已创建"
+        VoiceTaskState.PartialSuccess -> "请检查未创建项目的错误信息"
+        VoiceTaskState.Failure -> "可以修改文字后重试，或重新录音"
+    }
+    val isBusy = taskState in setOf(
+        VoiceTaskState.Transcribing,
+        VoiceTaskState.Parsing,
+        VoiceTaskState.Saving,
+    )
+    val transcriptEditable = taskState in setOf(
+        VoiceTaskState.Idle,
+        VoiceTaskState.TranscriptReady,
+        VoiceTaskState.Failure,
+    )
+    val primaryLabel = when (taskState) {
+        VoiceTaskState.Idle -> if (transcript.isBlank()) "开始说话" else "整理日程"
+        VoiceTaskState.Listening -> "完成录音"
+        VoiceTaskState.Transcribing -> "正在完成转写…"
+        VoiceTaskState.TranscriptReady -> "整理日程"
+        VoiceTaskState.Parsing -> "正在理解…"
+        VoiceTaskState.NeedsClarification -> "返回预览"
+        VoiceTaskState.Preview -> "查看预览"
+        VoiceTaskState.Saving -> "正在创建…"
+        VoiceTaskState.Success -> "完成"
+        VoiceTaskState.PartialSuccess -> "查看结果"
+        VoiceTaskState.Failure -> if (transcript.isBlank()) "重新说" else "重试整理"
+    }
+    val primaryEnabled = when (taskState) {
+        VoiceTaskState.Transcribing,
+        VoiceTaskState.Parsing,
+        VoiceTaskState.Saving,
+        -> false
+        VoiceTaskState.TranscriptReady -> transcript.isNotBlank()
+        else -> true
+    }
+    val disabledReason = when {
+        taskState == VoiceTaskState.Transcribing -> "请稍候，转写完成后才能继续。"
+        taskState == VoiceTaskState.Parsing -> "正在整理日程，暂时不能重复提交。"
+        taskState == VoiceTaskState.Saving -> "正在创建项目，请勿重复操作。"
+        taskState == VoiceTaskState.TranscriptReady && transcript.isBlank() ->
+            "请先输入或录制一段内容。"
+        else -> null
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1228,12 +1316,12 @@ private fun VoiceInputCurtain(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = if (state.isListening) "正在听" else "说出日程",
+                    text = title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (state.isParsing) "正在整理为日程" else "一句话可以拆成多个提醒",
+                    text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1246,7 +1334,26 @@ private fun VoiceInputCurtain(
             }
         }
 
-        if (state.isParsing) {
+        if (taskState == VoiceTaskState.Listening) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ListeningWaveform(elapsedSeconds)
+                Text(
+                    text = "%02d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        if (isBusy) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
 
@@ -1260,28 +1367,30 @@ private fun VoiceInputCurtain(
                 onValueChange = onTextChanged,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 112.dp, max = 168.dp)
+                    .heightIn(min = 104.dp, max = 168.dp)
                     .padding(10.dp)
                     .testTag("transcript-field"),
                 shape = RoundedCornerShape(8.dp),
-                label = { Text(if (state.isListening) "实时转写" else "文字输入") },
+                label = {
+                    Text(
+                        when (taskState) {
+                            VoiceTaskState.Listening -> "实时转写"
+                            VoiceTaskState.Transcribing -> "转写内容"
+                            else -> "文字输入"
+                        },
+                    )
+                },
                 placeholder = { Text("明天11点打开电脑，12点打开手机") },
                 minLines = 3,
                 maxLines = 6,
+                readOnly = !transcriptEditable,
             )
         }
 
-        if (state.parseHistory.isNotEmpty() &&
-            state.textInput.isBlank() &&
-            state.partialTranscript.isBlank()
-        ) {
-            ParseHistoryStrip(
-                history = state.parseHistory,
-                onReuseTranscript = onReuseTranscript,
-                onRegenerateTranscript = onRegenerateTranscript,
-                onClearHistory = onClearHistory,
-            )
-        }
+        SheetMessages(
+            errors = (listOfNotNull(state.errorMessage) + state.voiceSession.errors).distinct(),
+            warnings = state.warnings.distinct(),
+        )
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1290,6 +1399,7 @@ private fun VoiceInputCurtain(
         ) {
             FilledIconButton(
                 onClick = onVoiceInput,
+                enabled = !isBusy,
                 modifier = Modifier
                     .size(48.dp)
                     .testTag("curtain-voice-toggle-button"),
@@ -1312,8 +1422,26 @@ private fun VoiceInputCurtain(
                 )
             }
             Button(
-                onClick = onSubmit,
-                enabled = !state.isParsing && transcript.isNotBlank(),
+                onClick = {
+                    when (taskState) {
+                        VoiceTaskState.Idle ->
+                            if (transcript.isBlank()) onVoiceInput() else onSubmit()
+                        VoiceTaskState.Listening -> onVoiceInput()
+                        VoiceTaskState.TranscriptReady -> onSubmit()
+                        VoiceTaskState.NeedsClarification,
+                        VoiceTaskState.Preview,
+                        VoiceTaskState.Success,
+                        VoiceTaskState.PartialSuccess,
+                        -> onDismiss()
+                        VoiceTaskState.Failure ->
+                            if (transcript.isBlank()) onVoiceInput() else onSubmit()
+                        VoiceTaskState.Transcribing,
+                        VoiceTaskState.Parsing,
+                        VoiceTaskState.Saving,
+                        -> Unit
+                    }
+                },
+                enabled = primaryEnabled,
                 modifier = Modifier
                     .weight(1f)
                     .height(48.dp)
@@ -1322,8 +1450,89 @@ private fun VoiceInputCurtain(
             ) {
                 Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("生成日程")
+                Text(primaryLabel)
             }
+        }
+        disabledReason?.let { reason ->
+            Text(
+                text = reason,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ListeningWaveform(elapsedSeconds: Long) {
+    Row(
+        modifier = Modifier.height(28.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(7) { index ->
+            val phase = ((elapsedSeconds + index) % 5).toInt()
+            val barHeight = when (phase) {
+                0 -> 8.dp
+                1, 4 -> 14.dp
+                2 -> 24.dp
+                else -> 18.dp
+            }
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(barHeight)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.onSecondaryContainer),
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(
+            "正在听",
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
+}
+
+@Composable
+private fun SheetMessages(
+    errors: List<String>,
+    warnings: List<String>,
+) {
+    errors.filter(String::isNotBlank).distinct().forEach { message ->
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Assertive },
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.errorContainer,
+        ) {
+            Text(
+                text = message,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+    warnings.filter(String::isNotBlank).distinct().forEach { message ->
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+        ) {
+            Text(
+                text = message,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 }
@@ -1553,13 +1762,21 @@ private fun DraftReturnBar(
 
 @Composable
 private fun DraftPanel(
-    drafts: List<DraftEditor>,
+    state: CalendarUiState,
     onUpdate: (String, (DraftEditor) -> DraftEditor) -> Unit,
     onConfirmAll: () -> Unit,
     onConfirm: (String) -> Unit,
     onDiscard: (String) -> Unit,
     onClear: () -> Unit,
 ) {
+    val drafts = state.draftEditors
+    val zoneId = ZoneId.systemDefault()
+    val blockingIssues = drafts
+        .flatMap { draft -> draft.blockingIssueLabels(zoneId) }
+        .distinct()
+    val canCreateAll = drafts.isNotEmpty() &&
+        drafts.all { draft -> draft.canCreate(zoneId) } &&
+        !state.isSaving
     AnimatedVisibility(drafts.isNotEmpty()) {
         Surface(
             modifier = Modifier
@@ -1579,9 +1796,9 @@ private fun DraftPanel(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("待确认 ${drafts.size} 项", style = MaterialTheme.typography.titleMedium)
+                        Text("已整理出 ${drafts.size} 项安排", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            drafts.joinToString("  ") { it.title.ifBlank { "未命名" } },
+                            "逐项核对类型、时间和提醒，确认后再创建",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1589,16 +1806,37 @@ private fun DraftPanel(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onClear) { Text("清空") }
+                        TextButton(onClick = onClear, enabled = !state.isSaving) { Text("清空") }
                         Spacer(Modifier.width(4.dp))
                         Button(
                             onClick = onConfirmAll,
-                            enabled = drafts.any { it.title.isNotBlank() && it.startLocal.isNotBlank() },
+                            enabled = canCreateAll,
                             modifier = Modifier.testTag("draft-save-all-button"),
                         ) {
                             Icon(Icons.Rounded.Save, contentDescription = null)
-                            Text("全部保存")
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (state.isSaving) "正在创建…" else "创建 ${drafts.size} 项")
                         }
+                    }
+                }
+                SheetMessages(
+                    errors = (listOfNotNull(state.errorMessage) + state.voiceSession.errors).distinct(),
+                    warnings = state.warnings.distinct(),
+                )
+                if (blockingIssues.isNotEmpty()) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                    ) {
+                        Text(
+                            text = "创建前还需补充或确认：${blockingIssues.joinToString("、")}",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
                 }
                 Row(
@@ -1616,7 +1854,7 @@ private fun DraftPanel(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 320.dp),
+                        .heightIn(max = 520.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(drafts, key = { it.draftId }) { draft ->
@@ -1625,6 +1863,8 @@ private fun DraftPanel(
                             onUpdate = { transform -> onUpdate(draft.draftId, transform) },
                             onConfirm = { onConfirm(draft.draftId) },
                             onDiscard = { onDiscard(draft.draftId) },
+                            isSaving = state.isSaving,
+                            zoneId = zoneId,
                         )
                     }
                 }
@@ -1639,7 +1879,11 @@ private fun DraftEditorCard(
     onUpdate: ((DraftEditor) -> DraftEditor) -> Unit,
     onConfirm: () -> Unit,
     onDiscard: () -> Unit,
+    isSaving: Boolean,
+    zoneId: ZoneId,
 ) {
+    val issues = draft.blockingIssueLabels(zoneId)
+    val canCreate = draft.canCreate(zoneId) && !isSaving
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1657,9 +1901,9 @@ private fun DraftEditorCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Icon(
-                    if (draft.missingFields.isEmpty()) Icons.Rounded.RadioButtonUnchecked else Icons.Rounded.Close,
+                    if (issues.isEmpty()) Icons.Rounded.RadioButtonUnchecked else Icons.Rounded.Close,
                     contentDescription = null,
-                    tint = if (draft.missingFields.isEmpty()) {
+                    tint = if (issues.isEmpty()) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.error
@@ -1667,17 +1911,19 @@ private fun DraftEditorCard(
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        draft.title.ifBlank { "未命名任务" },
+                        draft.itemType.displayName(),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        draft.title.ifBlank { "未命名项目" },
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        listOf(
-                            draft.timeSummary(),
-                            draft.reminderSummary(),
-                            draft.repeatSummary(),
-                        ).filter { it.isNotBlank() }.joinToString("  ·  "),
+                        draft.timeSummary(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -1691,6 +1937,80 @@ private fun DraftEditorCard(
                 )
             }
 
+            Text(
+                "提醒：${draft.reminderSummary()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "重复：${draft.repeatSummary().ifBlank { "不重复" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "地点：${draft.location.ifBlank { "未填写" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "备注：${draft.notes.ifBlank { "未填写" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOf(
+                    if (draft.allDay) "全天" else "非全天",
+                    "时区 ${draft.timeZoneId}",
+                    if (draft.itemType == ScheduleItemType.TODO) {
+                        "优先级 ${draft.priority.displayName()}"
+                    } else {
+                        ""
+                    },
+                ).filter(String::isNotBlank).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                if (issues.isEmpty()) {
+                    "置信度 ${(draft.aiConfidence * 100).toInt()}% · 关键信息已确认"
+                } else {
+                    "置信度 ${(draft.aiConfidence * 100).toInt()}% · 待确认 ${issues.joinToString("、")}"
+                },
+                modifier = if (issues.isEmpty()) {
+                    Modifier
+                } else {
+                    Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                },
+                color = if (issues.isEmpty()) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (issues.isNotEmpty() &&
+                (draft.ambiguousFields.isNotEmpty() || "clarification" in draft.missingFields)
+            ) {
+                TextButton(
+                    onClick = {
+                        onUpdate {
+                            it.copy(
+                                missingFields = emptyList(),
+                                ambiguousFields = emptyList(),
+                            )
+                        }
+                    },
+                    enabled = !isSaving,
+                    modifier = Modifier.testTag("draft-resolve-ambiguity-button"),
+                ) {
+                    Text("我已核对标注信息")
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -1698,6 +2018,7 @@ private fun DraftEditorCard(
             ) {
                 IconButton(
                     onClick = { onUpdate { it.copy(expanded = !it.expanded) } },
+                    enabled = !isSaving,
                     modifier = Modifier.testTag("draft-edit-button"),
                 ) {
                     Icon(
@@ -1705,12 +2026,12 @@ private fun DraftEditorCard(
                         contentDescription = if (draft.expanded) "收起编辑" else "编辑",
                     )
                 }
-                IconButton(onClick = onDiscard) {
+                IconButton(onClick = onDiscard, enabled = !isSaving) {
                     Icon(Icons.Rounded.Delete, contentDescription = "删除草稿")
                 }
                 FilledIconButton(
                     onClick = onConfirm,
-                    enabled = draft.title.isNotBlank() && draft.startLocal.isNotBlank(),
+                    enabled = canCreate,
                     modifier = Modifier
                         .size(44.dp)
                         .testTag("draft-save-button"),
@@ -1721,42 +2042,223 @@ private fun DraftEditorCard(
 
             AnimatedVisibility(draft.expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("项目类型", style = MaterialTheme.typography.labelLarge)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(ScheduleItemType.entries) { type ->
+                            FilterChip(
+                                selected = draft.itemType == type,
+                                onClick = { onUpdate { it.withItemType(type) } },
+                                enabled = !isSaving,
+                                label = { Text(type.displayName()) },
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = draft.title,
-                        onValueChange = { value -> onUpdate { it.copy(title = value) } },
+                        onValueChange = { value ->
+                            onUpdate { it.copy(title = value).resolveFields("title") }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         label = { Text("标题") },
                         singleLine = true,
+                        enabled = !isSaving,
                     )
-                    OutlinedTextField(
-                        value = draft.startLocal,
-                        onValueChange = { value -> onUpdate { it.copy(startLocal = value) } },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        label = { Text(if (draft.allDay) "日期 yyyy-MM-dd" else "开始 yyyy-MM-dd HH:mm") },
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = draft.endLocal,
-                        onValueChange = { value -> onUpdate { it.copy(endLocal = value) } },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        label = { Text(if (draft.allDay) "结束日期" else "结束时间") },
-                        singleLine = true,
-                    )
+                    when (draft.itemType) {
+                        ScheduleItemType.EVENT -> {
+                            FilterChip(
+                                selected = draft.allDay,
+                                onClick = {
+                                    onUpdate {
+                                        it.copy(allDay = !it.allDay)
+                                            .resolveFields("all_day", "allDay")
+                                    }
+                                },
+                                enabled = !isSaving,
+                                label = { Text("全天事件") },
+                            )
+                            OutlinedTextField(
+                                value = draft.startLocal,
+                                onValueChange = { value ->
+                                    onUpdate {
+                                        it.copy(startLocal = value)
+                                            .resolveFields("start", "start_local", "startAt")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                label = {
+                                    Text(if (draft.allDay) "日期 yyyy-MM-dd" else "开始 yyyy-MM-dd HH:mm")
+                                },
+                                singleLine = true,
+                                enabled = !isSaving,
+                            )
+                            OutlinedTextField(
+                                value = draft.endLocal,
+                                onValueChange = { value ->
+                                    onUpdate {
+                                        it.copy(endLocal = value)
+                                            .resolveFields("end", "end_local", "endAt")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                label = { Text(if (draft.allDay) "结束日期" else "结束时间") },
+                                singleLine = true,
+                                enabled = !isSaving,
+                            )
+                        }
+                        ScheduleItemType.REMINDER -> {
+                            OutlinedTextField(
+                                value = draft.triggerLocal,
+                                onValueChange = { value ->
+                                    onUpdate {
+                                        it.copy(triggerLocal = value)
+                                            .resolveFields("trigger", "trigger_local", "triggerAt")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                label = { Text("提醒时间 yyyy-MM-dd HH:mm") },
+                                singleLine = true,
+                                enabled = !isSaving,
+                            )
+                        }
+                        ScheduleItemType.TODO -> {
+                            FilterChip(
+                                selected = draft.allDay,
+                                onClick = {
+                                    onUpdate {
+                                        it.copy(allDay = !it.allDay)
+                                            .resolveFields("all_day", "allDay")
+                                    }
+                                },
+                                enabled = !isSaving,
+                                label = { Text("仅设置截止日期") },
+                            )
+                            OutlinedTextField(
+                                value = draft.dueLocal,
+                                onValueChange = { value ->
+                                    onUpdate {
+                                        it.copy(dueLocal = value)
+                                            .resolveFields("due", "due_local", "dueAt")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                label = {
+                                    Text(
+                                        if (draft.allDay) {
+                                            "截止日期 yyyy-MM-dd"
+                                        } else {
+                                            "截止时间 yyyy-MM-dd HH:mm"
+                                        },
+                                    )
+                                },
+                                singleLine = true,
+                                enabled = !isSaving,
+                            )
+                            Text("优先级", style = MaterialTheme.typography.labelLarge)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(ScheduleItemPriority.entries) { priority ->
+                                    FilterChip(
+                                        selected = draft.priority == priority,
+                                        onClick = {
+                                            onUpdate {
+                                                it.copy(priority = priority)
+                                                    .resolveFields("priority")
+                                            }
+                                        },
+                                        enabled = !isSaving,
+                                        label = { Text(priority.displayName()) },
+                                    )
+                                }
+                            }
+                        }
+                    }
                     OutlinedTextField(
                         value = draft.reminderMinutes,
-                        onValueChange = { value -> onUpdate { it.copy(reminderMinutes = value) } },
+                        onValueChange = { value ->
+                            onUpdate {
+                                it.copy(reminderMinutes = value)
+                                    .resolveFields("reminder", "reminders", "reminder_minutes")
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         label = { Text("提醒分钟，逗号分隔") },
                         singleLine = true,
+                        enabled = !isSaving,
+                    )
+                    OutlinedTextField(
+                        value = draft.location,
+                        onValueChange = { value ->
+                            onUpdate { it.copy(location = value).resolveFields("location") }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text("地点") },
+                        singleLine = true,
+                        enabled = !isSaving,
+                    )
+                    OutlinedTextField(
+                        value = draft.notes,
+                        onValueChange = { value ->
+                            onUpdate { it.copy(notes = value).resolveFields("notes") }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text("备注") },
+                        minLines = 2,
+                        maxLines = 4,
+                        enabled = !isSaving,
+                    )
+                    OutlinedTextField(
+                        value = draft.timeZoneId,
+                        onValueChange = { value ->
+                            onUpdate {
+                                it.copy(timeZoneId = value)
+                                    .resolveFields("time_zone", "timezone", "timeZoneId")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text("时区（例如 Asia/Shanghai）") },
+                        singleLine = true,
+                        enabled = !isSaving,
+                    )
+                    OutlinedTextField(
+                        value = draft.recurrenceRule,
+                        onValueChange = { value ->
+                            onUpdate {
+                                it.copy(
+                                    recurrenceRule = value,
+                                    repeatFrequency = null,
+                                    repeatCount = "",
+                                )
+                                    .resolveFields("recurrence_rule", "recurrenceRule")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        label = { Text("重复规则（RRULE，可留空）") },
+                        placeholder = { Text("FREQ=WEEKLY;COUNT=8") },
+                        singleLine = true,
+                        enabled = !isSaving,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
-                            selected = draft.repeatFrequency == null,
-                            onClick = { onUpdate { it.copy(repeatFrequency = null, repeatCount = "") } },
+                            selected = draft.repeatFrequency == null && draft.recurrenceRule.isBlank(),
+                            onClick = {
+                                onUpdate {
+                                    it.copy(
+                                        recurrenceRule = "",
+                                        repeatFrequency = null,
+                                        repeatCount = "",
+                                    )
+                                }
+                            },
+                            enabled = !isSaving,
                             label = { Text("不重复") },
                         )
                         RepeatFrequency.entries.forEach { frequency ->
@@ -1765,6 +2267,7 @@ private fun DraftEditorCard(
                                 onClick = {
                                     onUpdate {
                                         it.copy(
+                                            recurrenceRule = "",
                                             repeatFrequency = frequency,
                                             repeatCount = it.repeatCount.ifBlank {
                                                 when (frequency) {
@@ -1775,6 +2278,7 @@ private fun DraftEditorCard(
                                         )
                                     }
                                 },
+                                enabled = !isSaving,
                                 label = { Text(frequency.label) },
                             )
                         }
@@ -1788,6 +2292,7 @@ private fun DraftEditorCard(
                             label = { Text("重复次数") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            enabled = !isSaving,
                         )
                     }
                 }
@@ -1797,10 +2302,20 @@ private fun DraftEditorCard(
 }
 
 private fun DraftEditor.timeSummary(): String =
-    when {
-        startLocal.isBlank() -> "缺少时间"
-        endLocal.isBlank() -> startLocal.replace("T", " ")
-        else -> "${startLocal.replace("T", " ")} - ${endLocal.replace("T", " ")}"
+    when (itemType) {
+        ScheduleItemType.EVENT -> when {
+            startLocal.isBlank() -> "缺少开始时间"
+            endLocal.isBlank() -> "开始 ${startLocal.replace("T", " ")}"
+            else -> "${startLocal.replace("T", " ")} - ${endLocal.replace("T", " ")}"
+        }
+        ScheduleItemType.REMINDER ->
+            triggerLocal.takeIf(String::isNotBlank)
+                ?.let { "提醒 ${it.replace("T", " ")}" }
+                ?: "缺少提醒时间"
+        ScheduleItemType.TODO ->
+            dueLocal.takeIf(String::isNotBlank)
+                ?.let { "截止 ${it.replace("T", " ")}" }
+                ?: "缺少截止时间"
     }
 
 private fun DraftEditor.reminderSummary(): String {
@@ -1817,13 +2332,30 @@ private fun DraftEditor.reminderSummary(): String {
 }
 
 private fun DraftEditor.repeatSummary(): String =
-    repeatFrequency?.let { frequency ->
-        val count = repeatCount.toIntOrNull()?.coerceIn(2, 60) ?: when (frequency) {
-            RepeatFrequency.DAILY -> 7
-            RepeatFrequency.WEEKLY -> 8
-        }
-        "${frequency.label}，共 $count 次"
-    }.orEmpty()
+    recurrenceRule.ifBlank {
+        repeatFrequency?.let { frequency ->
+            val count = repeatCount.toIntOrNull()?.coerceIn(2, 60) ?: when (frequency) {
+                RepeatFrequency.DAILY -> 7
+                RepeatFrequency.WEEKLY -> 8
+            }
+            "${frequency.label}，共 $count 次"
+        }.orEmpty()
+    }
+
+private fun ScheduleItemType.displayName(): String =
+    when (this) {
+        ScheduleItemType.EVENT -> "事件"
+        ScheduleItemType.REMINDER -> "提醒"
+        ScheduleItemType.TODO -> "待办"
+    }
+
+private fun ScheduleItemPriority.displayName(): String =
+    when (this) {
+        ScheduleItemPriority.LOW -> "低"
+        ScheduleItemPriority.NORMAL -> "普通"
+        ScheduleItemPriority.HIGH -> "高"
+        ScheduleItemPriority.URGENT -> "紧急"
+    }
 
 @Composable
 private fun EventEditorSheet(

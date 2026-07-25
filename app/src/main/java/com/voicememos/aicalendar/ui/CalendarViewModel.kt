@@ -397,8 +397,7 @@ class CalendarViewModel(
                 _uiState.update {
                     val session = when {
                         result.events.isEmpty() -> it.voiceSession.fail(requireNotNull(errorMessage))
-                        result.needsConfirmation ||
-                            result.requiresClarification ||
+                        result.requiresClarification ||
                             result.events.any { draft -> draft.needsClarification } ->
                             it.voiceSession.needsClarification(sessionWarnings)
                         else -> it.voiceSession.showPreview(sessionWarnings)
@@ -429,10 +428,19 @@ class CalendarViewModel(
 
     fun updateDraft(draftId: String, transform: (DraftEditor) -> DraftEditor) {
         _uiState.update { state ->
+            if (state.voiceTaskState == VoiceTaskState.Saving) return@update state
+            val updatedDrafts = state.draftEditors.map { draft ->
+                if (draft.draftId == draftId) transform(draft) else draft
+            }
+            val needsClarification = updatedDrafts.any { draft -> !draft.canCreate(zoneId) }
             state.copy(
-                draftEditors = state.draftEditors.map { draft ->
-                    if (draft.draftId == draftId) transform(draft) else draft
+                voiceSession = if (needsClarification) {
+                    state.voiceSession.needsClarification(state.voiceSession.warnings)
+                } else {
+                    state.voiceSession.showPreview(state.voiceSession.warnings)
                 },
+                draftEditors = updatedDrafts,
+                errorMessage = null,
             )
         }
     }
@@ -441,13 +449,15 @@ class CalendarViewModel(
         _uiState.update { state ->
             val remaining = state.draftEditors.filterNot { it.draftId == draftId }
             state.copy(
-                voiceSession = if (remaining.isEmpty()) {
-                    state.voiceSession.returnToTranscript()
-                } else {
-                    state.voiceSession
+                voiceSession = when {
+                    remaining.isEmpty() -> state.voiceSession.returnToTranscript()
+                    remaining.any { draft -> !draft.canCreate(zoneId) } ->
+                        state.voiceSession.needsClarification(state.voiceSession.warnings)
+                    else -> state.voiceSession.showPreview(state.voiceSession.warnings)
                 },
                 draftEditors = remaining,
                 showDraftSheet = state.showDraftSheet && remaining.isNotEmpty(),
+                errorMessage = null,
             )
         }
     }
@@ -480,7 +490,7 @@ class CalendarViewModel(
         val editor = _uiState.value.draftEditors.firstOrNull { it.draftId == draftId } ?: return
         val draft = editor.toDraft(zoneId)
         if (!draft.canCreate) {
-            val message = "这个草稿还缺少时间或标题。"
+            val message = "这个项目仍缺少关键信息或存在歧义，请先确认。"
             _uiState.update {
                 it.copy(
                     voiceSession = it.voiceSession.needsClarification(listOf(message)),
@@ -508,10 +518,11 @@ class CalendarViewModel(
                     val remainingDrafts = state.draftEditors.filterNot { it.draftId == draftId }
                     val completedSession = state.voiceSession.succeed(savedEvents.map { it.id })
                     state.copy(
-                        voiceSession = if (remainingDrafts.isEmpty()) {
-                            completedSession
-                        } else {
-                            completedSession.showPreview(emptyList())
+                        voiceSession = when {
+                            remainingDrafts.isEmpty() -> completedSession
+                            remainingDrafts.any { remaining -> !remaining.canCreate(zoneId) } ->
+                                completedSession.needsClarification(state.voiceSession.warnings)
+                            else -> completedSession.showPreview(emptyList())
                         },
                         selectedDate = savedEvents.first().startAt.atZone(zoneId).toLocalDate(),
                         draftEditors = remainingDrafts,
@@ -560,10 +571,11 @@ class CalendarViewModel(
             return
         }
         val editors = _uiState.value.draftEditors
+        if (editors.isEmpty()) return
         val preparedDrafts = editors.map { editor -> editor to editor.toDraft(zoneId) }
         val creatableDrafts = preparedDrafts.filter { (_, draft) -> draft.canCreate }
-        if (creatableDrafts.isEmpty()) {
-            val message = "有草稿缺少标题或时间，请先编辑。"
+        if (creatableDrafts.size != preparedDrafts.size) {
+            val message = "仍有项目缺少关键信息或存在歧义，请先逐项确认。"
             _uiState.update {
                 it.copy(
                     voiceSession = it.voiceSession.needsClarification(listOf(message)),

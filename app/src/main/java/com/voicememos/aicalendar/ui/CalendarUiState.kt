@@ -5,6 +5,8 @@ import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.domain.RepeatRule
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
 import com.voicememos.aicalendar.ui.session.VoiceScheduleSession
 import com.voicememos.aicalendar.ui.session.VoiceTaskState
 import java.time.Instant
@@ -97,18 +99,78 @@ data class DraftEditor(
     val repeatFrequency: RepeatFrequency? = null,
     val repeatCount: String = "",
     val expanded: Boolean = false,
+    val itemType: ScheduleItemType = ScheduleItemType.EVENT,
+    val triggerLocal: String = "",
+    val dueLocal: String = "",
+    val location: String = "",
+    val priority: ScheduleItemPriority = ScheduleItemPriority.NORMAL,
+    val ambiguousFields: List<String> = emptyList(),
+    val timeZoneId: String = ZoneId.systemDefault().id,
+    val recurrenceRule: String = "",
+    val completed: Boolean = false,
 ) {
     fun toDraft(zoneId: ZoneId): DraftCalendarEvent {
-        val start = parseLocalInstant(startLocal, allDay, zoneId)
-        val end = parseLocalInstant(endLocal, allDay, zoneId)
+        val editorZone = runCatching { ZoneId.of(timeZoneId.trim()) }.getOrNull() ?: zoneId
+        val start = parseLocalInstant(startLocal, allDay, editorZone)
+        val end = parseLocalInstant(endLocal, allDay, editorZone)
+        val trigger = parseLocalInstant(triggerLocal, allDay = false, zoneId = editorZone)
+        val due = parseLocalInstant(dueLocal, allDay, editorZone)
         val missing = missingFields.toMutableSet()
-        if (start == null) missing += "start_local" else missing.remove("start_local")
+        if (title.isBlank()) missing += "title" else missing.removeFields("title")
+        if (runCatching { ZoneId.of(timeZoneId.trim()) }.isFailure) {
+            missing += "time_zone"
+        } else {
+            missing.removeFields("time_zone", "timeZone", "timeZoneId")
+        }
+        when (itemType) {
+            ScheduleItemType.EVENT -> {
+                if (start == null) {
+                    missing += "start_local"
+                } else {
+                    missing.removeFields("start", "start_local", "startAt", "startDateTime")
+                }
+                if (start != null && end != null && !end.isAfter(start)) {
+                    missing += "end_local"
+                } else {
+                    missing.removeFields("end", "end_local", "endAt", "endDateTime")
+                }
+                missing.removeFields("trigger", "trigger_local", "triggerAt", "triggerDateTime")
+                missing.removeFields("due", "due_local", "dueAt", "dueDateTime")
+            }
+            ScheduleItemType.REMINDER -> {
+                if (trigger == null) {
+                    missing += "trigger"
+                } else {
+                    missing.removeFields("trigger", "trigger_local", "triggerAt", "triggerDateTime")
+                }
+                missing.removeFields("start", "start_local", "startAt", "startDateTime")
+                missing.removeFields("end", "end_local", "endAt", "endDateTime")
+                missing.removeFields("due", "due_local", "dueAt", "dueDateTime")
+            }
+            ScheduleItemType.TODO -> {
+                // The current persistence layer still requires a due instant as
+                // the compatibility startAt value.
+                if (due == null) {
+                    missing += "due"
+                } else {
+                    missing.removeFields("due", "due_local", "dueAt", "dueDateTime")
+                }
+                missing.removeFields("start", "start_local", "startAt", "startDateTime")
+                missing.removeFields("end", "end_local", "endAt", "endDateTime")
+                missing.removeFields("trigger", "trigger_local", "triggerAt", "triggerDateTime")
+            }
+        }
+        val compatibilityStart = when (itemType) {
+            ScheduleItemType.EVENT -> start
+            ScheduleItemType.REMINDER -> trigger
+            ScheduleItemType.TODO -> due
+        }
         return DraftCalendarEvent(
             draftId = draftId,
             title = title,
             notes = notes.takeIf { it.isNotBlank() },
-            startAt = start,
-            endAt = end,
+            startAt = compatibilityStart,
+            endAt = end.takeIf { itemType == ScheduleItemType.EVENT },
             allDay = allDay,
             reminderMinutes = reminderMinutes.split(",")
                 .mapNotNull { it.trim().toIntOrNull() }
@@ -129,17 +191,60 @@ data class DraftEditor(
                     },
                 )
             },
+            itemType = itemType,
+            triggerAt = trigger.takeIf { itemType == ScheduleItemType.REMINDER },
+            dueAt = due.takeIf { itemType == ScheduleItemType.TODO },
+            location = location.trim().takeIf { it.isNotEmpty() },
+            recurrenceRule = recurrenceRule.trim().takeIf { it.isNotEmpty() },
+            priority = priority.takeIf { itemType == ScheduleItemType.TODO },
+            completed = completed,
+            ambiguousFields = ambiguousFields.distinct().sorted(),
+            timeZoneId = editorZone.id,
         )
     }
+
+    fun withItemType(type: ScheduleItemType): DraftEditor {
+        val availableTime = startLocal.ifBlank { triggerLocal.ifBlank { dueLocal } }
+        return copy(
+            itemType = type,
+            startLocal = if (type == ScheduleItemType.EVENT) availableTime else startLocal,
+            triggerLocal = if (type == ScheduleItemType.REMINDER) availableTime else triggerLocal,
+            dueLocal = if (type == ScheduleItemType.TODO) availableTime else dueLocal,
+            missingFields = missingFields.resolveFields("type", "item_type"),
+            ambiguousFields = ambiguousFields.resolveFields("type", "item_type"),
+        )
+    }
+
+    fun resolveFields(vararg fields: String): DraftEditor =
+        copy(
+            missingFields = missingFields.resolveFields(*fields),
+            ambiguousFields = ambiguousFields.resolveFields(*fields),
+        )
+
+    fun blockingIssueLabels(zoneId: ZoneId): List<String> {
+        val draft = toDraft(zoneId)
+        return (draft.missingFields + draft.ambiguousFields)
+            .distinct()
+            .map(::fieldDisplayName)
+            .distinct()
+    }
+
+    fun canCreate(zoneId: ZoneId): Boolean = toDraft(zoneId).canCreate
 }
 
-fun DraftCalendarEvent.toEditor(zoneId: ZoneId): DraftEditor =
-    DraftEditor(
+fun DraftCalendarEvent.toEditor(zoneId: ZoneId): DraftEditor {
+    val editorZone = timeZoneId
+        ?.let { value -> runCatching { ZoneId.of(value) }.getOrNull() }
+        ?: zoneId
+    return DraftEditor(
         draftId = draftId,
         title = title,
         notes = notes.orEmpty(),
-        startLocal = startAt?.formatForEditor(allDay, zoneId).orEmpty(),
-        endLocal = endAt?.formatForEditor(allDay, zoneId).orEmpty(),
+        startLocal = startAt
+            ?.takeIf { itemType == ScheduleItemType.EVENT }
+            ?.formatForEditor(allDay, editorZone)
+            .orEmpty(),
+        endLocal = endAt?.formatForEditor(allDay, editorZone).orEmpty(),
         allDay = allDay,
         reminderMinutes = reminderMinutes.joinToString(","),
         sourceTranscript = sourceTranscript,
@@ -147,7 +252,21 @@ fun DraftCalendarEvent.toEditor(zoneId: ZoneId): DraftEditor =
         missingFields = missingFields,
         repeatFrequency = repeatRule?.frequency,
         repeatCount = repeatRule?.normalizedCount?.toString().orEmpty(),
+        itemType = itemType,
+        triggerLocal = (triggerAt ?: startAt.takeIf { itemType == ScheduleItemType.REMINDER })
+            ?.formatForEditor(allDay = false, zoneId = editorZone)
+            .orEmpty(),
+        dueLocal = (dueAt ?: startAt.takeIf { itemType == ScheduleItemType.TODO })
+            ?.formatForEditor(allDay, editorZone)
+            .orEmpty(),
+        location = location.orEmpty(),
+        priority = priority ?: ScheduleItemPriority.NORMAL,
+        ambiguousFields = ambiguousFields,
+        timeZoneId = editorZone.id,
+        recurrenceRule = recurrenceRule.orEmpty(),
+        completed = completed,
     )
+}
 
 data class EventEditor(
     val eventId: String,
@@ -213,5 +332,36 @@ private fun parseDateTime(value: String, zoneId: ZoneId): Instant? {
         runCatching { LocalDateTime.parse(value).atZone(zoneId).toInstant() }.getOrNull()
     }
 }
+
+private fun List<String>.resolveFields(vararg fields: String): List<String> {
+    val normalized = fields.map(::fieldKey).toSet()
+    return filterNot { fieldKey(it) in normalized }
+}
+
+private fun MutableSet<String>.removeFields(vararg fields: String) {
+    val normalized = fields.map(::fieldKey).toSet()
+    removeAll { fieldKey(it) in normalized }
+}
+
+private fun fieldKey(field: String): String =
+    field.trim().lowercase().filter(Char::isLetterOrDigit)
+
+private fun fieldDisplayName(field: String): String =
+    when (fieldKey(field)) {
+        "title" -> "标题"
+        "type", "itemtype" -> "类型"
+        "start", "startlocal", "startat", "startdatetime" -> "开始时间"
+        "end", "endlocal", "endat", "enddatetime" -> "结束时间"
+        "trigger", "triggerlocal", "triggerat", "triggerdatetime" -> "提醒时间"
+        "due", "duelocal", "dueat", "duedatetime" -> "截止时间"
+        "location" -> "地点"
+        "notes" -> "备注"
+        "recurrencerule" -> "重复规则"
+        "priority" -> "优先级"
+        "timezone", "timezoneid" -> "时区"
+        "allday" -> "全天设置"
+        "clarification" -> "整体信息"
+        else -> field
+    }
 
 private val EditorDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")

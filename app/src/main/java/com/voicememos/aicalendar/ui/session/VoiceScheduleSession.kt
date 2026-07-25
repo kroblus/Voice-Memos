@@ -13,6 +13,7 @@ data class VoiceScheduleSession(
     val errors: List<String> = emptyList(),
     val createdItemIds: List<String> = emptyList(),
     val startedAt: Instant = Instant.now(),
+    val listeningStartedAt: Instant? = null,
     val updatedAt: Instant = startedAt,
 ) {
     val isListening: Boolean
@@ -35,6 +36,7 @@ data class VoiceScheduleSession(
     fun startListening(now: Instant = Instant.now()): VoiceScheduleSession =
         copy(
             state = VoiceTaskState.Listening,
+            listeningStartedAt = now,
             partialTranscript = "",
             warnings = emptyList(),
             errors = emptyList(),

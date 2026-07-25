@@ -20,10 +20,23 @@ class CalendarRepository(
     suspend fun futureScheduled(from: Instant): List<CalendarEvent> =
         dao.futureScheduled(from.toEpochMilli()).map(CalendarEventEntity::toDomain)
 
-    suspend fun createFromDraft(draft: DraftCalendarEvent): CalendarEvent {
-        val entity = draft.toEntity()
-        dao.upsert(entity)
-        return entity.toDomain()
+    suspend fun createFromDraft(
+        draft: DraftCalendarEvent,
+        creationKey: String? = null,
+    ): CalendarEvent {
+        val normalizedCreationKey = creationKey?.trim()?.takeIf(String::isNotEmpty)
+        val entity = draft.toEntity(creationKey = normalizedCreationKey)
+        if (normalizedCreationKey == null) {
+            dao.upsert(entity)
+            return entity.toDomain()
+        }
+
+        if (dao.insertIgnore(entity) != INSERT_IGNORED) {
+            return entity.toDomain()
+        }
+        return requireNotNull(dao.findByCreationKey(normalizedCreationKey)) {
+            "Creation key conflict was reported, but no persisted event could be found."
+        }.toDomain()
     }
 
     suspend fun importEvents(events: List<CalendarEvent>): Int {
@@ -80,5 +93,9 @@ class CalendarRepository(
 
     suspend fun deleteAll() {
         dao.deleteAll()
+    }
+
+    private companion object {
+        const val INSERT_IGNORED = -1L
     }
 }

@@ -14,6 +14,12 @@ interface CalendarEventDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(events: List<CalendarEventEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(event: CalendarEventEntity): Long
+
+    @Query("SELECT * FROM calendar_events WHERE creationKey = :creationKey LIMIT 1")
+    suspend fun findByCreationKey(creationKey: String): CalendarEventEntity?
+
     @Query(
         """
         SELECT * FROM calendar_events

@@ -28,6 +28,7 @@ class VoiceScheduleSessionTest {
         assertEquals("明天下午三点开会", session.editedTranscript)
         assertEquals("", session.partialTranscript)
         assertEquals(startedAt, session.startedAt)
+        assertEquals(listeningAt, session.listeningStartedAt)
         assertEquals(readyAt, session.updatedAt)
         assertFalse(session.isListening)
         assertTrue(session.canBeginParsing)

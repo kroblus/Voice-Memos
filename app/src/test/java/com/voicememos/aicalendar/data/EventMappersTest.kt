@@ -1,6 +1,12 @@
 package com.voicememos.aicalendar.data
 
+import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
+import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.SyncStatus
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -35,5 +41,38 @@ class EventMappersTest {
         assertNull(entity.notes)
         assertEquals(start.toEpochMilli(), entity.startAtEpochMillis)
         assertEquals("0,10", entity.reminderMinutesCsv)
+    }
+
+    @Test
+    fun typedReminderRoundTripsEveryV2Field() {
+        val triggerAt = Instant.parse("2026-07-26T13:00:00Z")
+        val event = CalendarEvent(
+            id = "reminder-1",
+            title = "吃药",
+            notes = "饭后",
+            startAt = triggerAt,
+            endAt = null,
+            allDay = false,
+            reminderMinutes = listOf(0, 10),
+            status = EventStatus.SCHEDULED,
+            sourceTranscript = "晚上九点提醒我吃药",
+            aiConfidence = 0.93,
+            itemType = ScheduleItemType.REMINDER,
+            triggerAt = triggerAt,
+            dueAt = null,
+            location = "家",
+            recurrenceRule = "FREQ=DAILY;COUNT=7",
+            priority = ScheduleItemPriority.HIGH,
+            notificationStatus = NotificationStatus.SCHEDULED,
+            syncStatus = SyncStatus.SYNCED,
+            externalCalendarEventId = "calendar-42",
+            creationKey = "session-1:item-1",
+        )
+
+        val restored = event.toEntity(
+            now = Instant.parse("2026-07-25T00:00:00Z"),
+        ).toDomain()
+
+        assertEquals(event, restored)
     }
 }

@@ -2,6 +2,8 @@ package com.voicememos.aicalendar.data
 
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
 import java.time.Instant
 import java.time.ZoneId
 import org.junit.Assert.assertTrue
@@ -51,6 +53,7 @@ class CalendarExportTest {
         assertTrue(ics.contains("TRIGGER:PT0M"))
         assertTrue(ics.contains("TRIGGER:-PT10M"))
         assertTrue(ics.contains("X-SHENGLI-STATUS:SCHEDULED"))
+        assertTrue(ics.contains("X-SHENGLI-TYPE:EVENT"))
         assertTrue(ics.endsWith("END:VCALENDAR\r\n"))
     }
 
@@ -72,6 +75,38 @@ class CalendarExportTest {
 
         assertTrue(ics.contains("DTSTART;VALUE=DATE:20260618"))
         assertTrue(ics.contains("DTEND;VALUE=DATE:20260619"))
+    }
+
+    @Test
+    fun typedTodoExportsTypeMetadataToJsonAndIcs() {
+        val dueAt = Instant.parse("2026-07-31T09:00:00Z")
+        val todo = event(
+            id = "todo-1",
+            title = "提交申请",
+            startAt = dueAt,
+        ).copy(
+            itemType = ScheduleItemType.TODO,
+            dueAt = dueAt,
+            location = "办公室",
+            recurrenceRule = "FREQ=WEEKLY;COUNT=2",
+            priority = ScheduleItemPriority.HIGH,
+            creationKey = "session-1:item-2",
+        )
+
+        val json = exportEventsJson(listOf(todo))
+        val ics = exportEventsIcs(
+            events = listOf(todo),
+            zoneId = ZoneId.of("Asia/Shanghai"),
+            now = Instant.parse("2026-07-25T00:00:00Z"),
+        )
+
+        assertTrue(json.contains("\"itemType\": \"TODO\""))
+        assertTrue(json.contains("\"dueAt\": \"2026-07-31T09:00:00Z\""))
+        assertTrue(json.contains("\"creationKey\": \"session-1:item-2\""))
+        assertTrue(ics.contains("X-SHENGLI-TYPE:TODO"))
+        assertTrue(ics.contains("X-SHENGLI-PRIORITY:HIGH"))
+        assertTrue(ics.contains("LOCATION:办公室"))
+        assertTrue(ics.contains("RRULE:FREQ=WEEKLY;COUNT=2"))
     }
 
     private fun event(

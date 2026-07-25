@@ -2,6 +2,10 @@ package com.voicememos.aicalendar.data
 
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.SyncStatus
 import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -17,7 +21,7 @@ data class CalendarBackupImportResult(
 
 @Serializable
 private data class CalendarBackupPayload(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val exportedAt: String,
     val events: List<CalendarBackupEvent> = emptyList(),
 )
@@ -34,6 +38,16 @@ private data class CalendarBackupEvent(
     val status: String = EventStatus.SCHEDULED.name,
     val sourceTranscript: String? = null,
     val aiConfidence: Double = 0.0,
+    val itemType: String = ScheduleItemType.EVENT.name,
+    val triggerAt: String? = null,
+    val dueAt: String? = null,
+    val location: String? = null,
+    val recurrenceRule: String? = null,
+    val priority: String? = null,
+    val notificationStatus: String = NotificationStatus.PENDING.name,
+    val syncStatus: String = SyncStatus.LOCAL_ONLY.name,
+    val externalCalendarEventId: String? = null,
+    val creationKey: String? = null,
 )
 
 fun exportCalendarBackup(
@@ -78,6 +92,16 @@ private fun CalendarEvent.toBackupEvent(): CalendarBackupEvent =
         status = status.name,
         sourceTranscript = sourceTranscript,
         aiConfidence = aiConfidence.coerceIn(0.0, 1.0),
+        itemType = itemType.name,
+        triggerAt = triggerAt?.toString(),
+        dueAt = dueAt?.toString(),
+        location = location,
+        recurrenceRule = recurrenceRule,
+        priority = priority?.name,
+        notificationStatus = notificationStatus.name,
+        syncStatus = syncStatus.name,
+        externalCalendarEventId = externalCalendarEventId,
+        creationKey = creationKey,
     )
 
 private fun CalendarBackupEvent.toDomain(): CalendarEvent? {
@@ -101,8 +125,29 @@ private fun CalendarBackupEvent.toDomain(): CalendarEvent? {
         status = runCatching { EventStatus.valueOf(status) }.getOrDefault(EventStatus.SCHEDULED),
         sourceTranscript = sourceTranscript?.trim()?.takeIf { it.isNotEmpty() },
         aiConfidence = aiConfidence.coerceIn(0.0, 1.0),
+        itemType = itemType.toEnumOrDefault(ScheduleItemType.EVENT),
+        triggerAt = triggerAt.toInstantOrNull(),
+        dueAt = dueAt.toInstantOrNull(),
+        location = location.normalized(),
+        recurrenceRule = recurrenceRule.normalized(),
+        priority = priority?.toEnumOrNull<ScheduleItemPriority>(),
+        notificationStatus = notificationStatus.toEnumOrDefault(NotificationStatus.PENDING),
+        syncStatus = syncStatus.toEnumOrDefault(SyncStatus.LOCAL_ONLY),
+        externalCalendarEventId = externalCalendarEventId.normalized(),
+        creationKey = creationKey.normalized(),
     )
 }
+
+private fun String?.toInstantOrNull(): Instant? =
+    normalized()?.let { value -> runCatching { Instant.parse(value) }.getOrNull() }
+
+private inline fun <reified T : Enum<T>> String.toEnumOrDefault(default: T): T =
+    enumValues<T>().firstOrNull { it.name == this } ?: default
+
+private inline fun <reified T : Enum<T>> String.toEnumOrNull(): T? =
+    enumValues<T>().firstOrNull { it.name == this }
+
+private fun String?.normalized(): String? = this?.trim()?.takeIf(String::isNotEmpty)
 
 private val BackupJson = Json {
     ignoreUnknownKeys = true

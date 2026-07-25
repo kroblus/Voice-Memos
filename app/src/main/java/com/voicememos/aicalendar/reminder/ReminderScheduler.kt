@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.voicememos.aicalendar.domain.CalendarEvent
+import com.voicememos.aicalendar.domain.ScheduleItemType
 import java.time.Clock
 import java.time.Instant
 
@@ -15,14 +16,23 @@ enum class ScheduleResult {
     EXACT,
     INEXACT,
     SKIPPED_PAST,
+    NOT_REQUIRED,
     FAILED,
 }
 
+internal fun CalendarEvent.reminderAnchor(): Instant? =
+    when (itemType) {
+        ScheduleItemType.EVENT -> startAt
+        ScheduleItemType.REMINDER -> triggerAt
+        ScheduleItemType.TODO -> dueAt
+    }
+
 internal fun determineScheduleResult(
-    triggerAt: Instant,
+    triggerAt: Instant?,
     now: Instant,
     canScheduleExact: Boolean,
 ): ScheduleResult {
+    if (triggerAt == null) return ScheduleResult.NOT_REQUIRED
     if (!triggerAt.isAfter(now)) return ScheduleResult.SKIPPED_PAST
     return if (canScheduleExact) ScheduleResult.EXACT else ScheduleResult.INEXACT
 }
@@ -41,13 +51,15 @@ class ReminderScheduler(
     fun scheduleWithResults(event: CalendarEvent): Map<Int, ScheduleResult> {
         val reminderMinutes = event.reminderMinutes.distinct()
         if (reminderMinutes.isEmpty()) return emptyMap()
+        val anchor = event.reminderAnchor()
+            ?: return reminderMinutes.associateWith { ScheduleResult.NOT_REQUIRED }
         if (runCatching { ensureNotificationChannel(appContext) }.isFailure) {
             return reminderMinutes.associateWith { ScheduleResult.FAILED }
         }
 
         val now = clock.instant()
         return reminderMinutes.associateWith { minutesBefore ->
-            val triggerAt = event.startAt.minusSeconds(minutesBefore * 60L)
+            val triggerAt = anchor.minusSeconds(minutesBefore * 60L)
             scheduleSingle(event, minutesBefore, triggerAt, now)
         }
     }
@@ -71,7 +83,12 @@ class ReminderScheduler(
             now = now,
             canScheduleExact = canScheduleExact,
         )
-        if (result == ScheduleResult.SKIPPED_PAST) return@runCatching result
+        if (
+            result == ScheduleResult.SKIPPED_PAST ||
+            result == ScheduleResult.NOT_REQUIRED
+        ) {
+            return@runCatching result
+        }
 
         val pendingIntent = pendingIntent(event.id, minutesBefore, event.title)
         when (result) {
@@ -87,6 +104,7 @@ class ReminderScheduler(
                 pendingIntent,
             )
             ScheduleResult.SKIPPED_PAST,
+            ScheduleResult.NOT_REQUIRED,
             ScheduleResult.FAILED,
             -> Unit
         }

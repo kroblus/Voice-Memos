@@ -57,6 +57,7 @@ class VoiceCalendarFlowTest {
         composeRule.onNodeWithTag("transcript-field")
             .performTextReplacement("明天中午11点提醒我打开电脑12点提醒我打开手机")
         composeRule.onNodeWithTag("transcript-field").assertTextContains("打开电脑", substring = true)
+        composeRule.onNodeWithTag("generate-button").assertTextContains("整理日程")
         closeSoftKeyboard()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("generate-button")
@@ -65,6 +66,7 @@ class VoiceCalendarFlowTest {
         composeRule.waitUntilNodeExists("draft-panel")
         composeRule.waitUntilAnyTextContains("打开电脑")
         composeRule.assertAnyTextContains("打开手机")
+        composeRule.onNodeWithTag("draft-save-all-button").assertTextContains("创建 2 项")
 
         composeRule.saveAllDrafts()
 
@@ -72,9 +74,7 @@ class VoiceCalendarFlowTest {
         composeRule.scrollEventListToText("打开手机")
         composeRule.assertAnyTextContains("打开手机")
         composeRule.openInputCurtainForTextEntry()
-        composeRule.onAllNodesWithTag("parse-history-row").onFirst().assertIsDisplayed()
-        composeRule.onAllNodesWithTag("parse-history-reuse-button").onFirst().assertIsDisplayed()
-        composeRule.onAllNodesWithTag("parse-history-regenerate-button").onFirst().assertIsDisplayed()
+        composeRule.onNodeWithTag("parse-history-row").assertDoesNotExist()
         composeRule.closeInputCurtain()
 
         composeRule.onNodeWithTag("settings-button").performClick()
