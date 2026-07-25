@@ -8,21 +8,47 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.voicememos.aicalendar.domain.CalendarEvent
+import java.time.Clock
 import java.time.Instant
 
+enum class ScheduleResult {
+    EXACT,
+    INEXACT,
+    SKIPPED_PAST,
+    FAILED,
+}
+
+internal fun determineScheduleResult(
+    triggerAt: Instant,
+    now: Instant,
+    canScheduleExact: Boolean,
+): ScheduleResult {
+    if (!triggerAt.isAfter(now)) return ScheduleResult.SKIPPED_PAST
+    return if (canScheduleExact) ScheduleResult.EXACT else ScheduleResult.INEXACT
+}
+
 class ReminderScheduler(
-    private val context: Context,
+    context: Context,
+    private val clock: Clock = Clock.systemUTC(),
 ) {
     private val appContext = context.applicationContext
     private val alarmManager = appContext.getSystemService(AlarmManager::class.java)
 
     fun schedule(event: CalendarEvent) {
-        ensureNotificationChannel(appContext)
-        event.reminderMinutes.forEach { minutesBefore ->
+        scheduleWithResults(event)
+    }
+
+    fun scheduleWithResults(event: CalendarEvent): Map<Int, ScheduleResult> {
+        val reminderMinutes = event.reminderMinutes.distinct()
+        if (reminderMinutes.isEmpty()) return emptyMap()
+        if (runCatching { ensureNotificationChannel(appContext) }.isFailure) {
+            return reminderMinutes.associateWith { ScheduleResult.FAILED }
+        }
+
+        val now = clock.instant()
+        return reminderMinutes.associateWith { minutesBefore ->
             val triggerAt = event.startAt.minusSeconds(minutesBefore * 60L)
-            if (triggerAt.isAfter(Instant.now())) {
-                scheduleSingle(event, minutesBefore, triggerAt.toEpochMilli())
-            }
+            scheduleSingle(event, minutesBefore, triggerAt, now)
         }
     }
 
@@ -32,24 +58,40 @@ class ReminderScheduler(
         }
     }
 
-    private fun scheduleSingle(event: CalendarEvent, minutesBefore: Int, triggerAtMillis: Long) {
+    private fun scheduleSingle(
+        event: CalendarEvent,
+        minutesBefore: Int,
+        triggerAt: Instant,
+        now: Instant,
+    ): ScheduleResult = runCatching {
+        val canScheduleExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            alarmManager.canScheduleExactAlarms()
+        val result = determineScheduleResult(
+            triggerAt = triggerAt,
+            now = now,
+            canScheduleExact = canScheduleExact,
+        )
+        if (result == ScheduleResult.SKIPPED_PAST) return@runCatching result
+
         val pendingIntent = pendingIntent(event.id, minutesBefore, event.title)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            alarmManager.setWindow(
+        when (result) {
+            ScheduleResult.EXACT -> alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
-                triggerAtMillis,
+                triggerAt.toEpochMilli(),
+                pendingIntent,
+            )
+            ScheduleResult.INEXACT -> alarmManager.setWindow(
+                AlarmManager.RTC_WAKEUP,
+                triggerAt.toEpochMilli(),
                 INEXACT_WINDOW_MILLIS,
                 pendingIntent,
             )
-            return
+            ScheduleResult.SKIPPED_PAST,
+            ScheduleResult.FAILED,
+            -> Unit
         }
-
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerAtMillis,
-            pendingIntent,
-        )
-    }
+        result
+    }.getOrDefault(ScheduleResult.FAILED)
 
     private fun pendingIntent(eventId: String, minutesBefore: Int, title: String): PendingIntent {
         val intent = Intent(appContext, ReminderReceiver::class.java).apply {
@@ -70,7 +112,6 @@ class ReminderScheduler(
         private const val INEXACT_WINDOW_MILLIS = 10 * 60 * 1000L
 
         fun ensureNotificationChannel(context: Context) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
             val manager = context.getSystemService(NotificationManager::class.java)
             val channel = NotificationChannel(
                 CHANNEL_ID,
@@ -83,4 +124,3 @@ class ReminderScheduler(
         }
     }
 }
-

@@ -17,6 +17,7 @@ class SpeechInputController(
 ) {
     private val appContext = context.applicationContext
     private var recognizer: SpeechRecognizer? = null
+    private var recognitionActive: Boolean = false
 
     val isAvailable: Boolean
         get() = SpeechRecognizer.isRecognitionAvailable(appContext)
@@ -33,6 +34,7 @@ class SpeechInputController(
         speechRecognizer.setRecognitionListener(
             object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
+                    recognitionActive = true
                     onListeningChanged(true)
                 }
 
@@ -40,16 +42,16 @@ class SpeechInputController(
                 override fun onRmsChanged(rmsdB: Float) = Unit
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
                 override fun onEndOfSpeech() {
-                    onListeningChanged(false)
+                    reportTranscribing()
                 }
 
                 override fun onError(error: Int) {
-                    onListeningChanged(false)
+                    reportTranscribing()
                     onError(error.toReadableMessage())
                 }
 
                 override fun onResults(results: Bundle?) {
-                    onListeningChanged(false)
+                    reportTranscribing()
                     results?.bestText()?.let(onFinalResult)
                         ?: onError("没有识别到语音，可以直接输入文字。")
                 }
@@ -67,12 +69,18 @@ class SpeechInputController(
 
     fun stop() {
         recognizer?.stopListening()
-        onListeningChanged(false)
+        reportTranscribing()
     }
 
     fun destroy() {
+        val wasActive = recognitionActive
         recognizer?.destroy()
         recognizer = null
+        recognitionActive = false
+        if (wasActive) {
+            onListeningChanged(false)
+            onError("语音识别已中断，已保留当前文字，可以重试。")
+        }
     }
 
     private fun recognizerIntent(): Intent =
@@ -91,6 +99,11 @@ class SpeechInputController(
             ?.firstOrNull()
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
+
+    private fun reportTranscribing() {
+        recognitionActive = false
+        onListeningChanged(false)
+    }
 
     private fun Int.toReadableMessage(): String =
         when (this) {

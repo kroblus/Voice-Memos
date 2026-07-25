@@ -27,7 +27,7 @@ class DeepSeekCalendarParser(
         encodeDefaults = true
         ignoreUnknownKeys = true
         explicitNulls = false
-        isLenient = true
+        isLenient = false
     },
     private val clock: Clock = Clock.systemDefaultZone(),
 ) {
@@ -145,22 +145,24 @@ class DeepSeekCalendarParser(
         ) {
             listOf(
                 AiCalendarEvent(
+                    type = "REMINDER",
                     title = "打开电脑",
                     notes = "由 mock DeepSeek 回应生成",
-                    startLocal = "${baseDate}T11:00:00",
-                    endLocal = "${baseDate}T11:30:00",
+                    trigger = "${baseDate}T11:00:00",
+                    timeZone = zoneId.id,
                     allDay = false,
-                    reminderMinutes = listOf(defaultReminderMinutes),
+                    reminderOffsets = listOf(defaultReminderMinutes),
                     confidence = 0.95,
                     missingFields = emptyList(),
                 ),
                 AiCalendarEvent(
+                    type = "REMINDER",
                     title = "打开手机",
                     notes = "由 mock DeepSeek 回应生成",
-                    startLocal = "${baseDate}T12:00:00",
-                    endLocal = "${baseDate}T12:30:00",
+                    trigger = "${baseDate}T12:00:00",
+                    timeZone = zoneId.id,
                     allDay = false,
-                    reminderMinutes = listOf(defaultReminderMinutes),
+                    reminderOffsets = listOf(defaultReminderMinutes),
                     confidence = 0.94,
                     missingFields = emptyList(),
                 ),
@@ -168,14 +170,14 @@ class DeepSeekCalendarParser(
         } else if (normalizedTranscript.contains("每天")) {
             listOf(
                 AiCalendarEvent(
+                    type = "REMINDER",
                     title = "喝水",
                     notes = "由 mock DeepSeek 回应生成",
-                    startLocal = "${baseDate}T09:00:00",
-                    endLocal = "${baseDate}T09:30:00",
+                    trigger = "${baseDate}T09:00:00",
+                    timeZone = zoneId.id,
                     allDay = false,
-                    reminderMinutes = listOf(defaultReminderMinutes),
-                    repeatFrequency = "daily",
-                    repeatCount = 7,
+                    reminderOffsets = listOf(defaultReminderMinutes),
+                    recurrenceRule = "FREQ=DAILY;COUNT=7",
                     confidence = 0.94,
                     missingFields = emptyList(),
                 ),
@@ -183,14 +185,15 @@ class DeepSeekCalendarParser(
         } else if (normalizedTranscript.contains("每周")) {
             listOf(
                 AiCalendarEvent(
+                    type = "EVENT",
                     title = "项目复盘",
                     notes = "由 mock DeepSeek 回应生成",
-                    startLocal = "${baseDate}T10:00:00",
-                    endLocal = "${baseDate}T10:30:00",
+                    start = "${baseDate}T10:00:00",
+                    end = "${baseDate}T10:30:00",
+                    timeZone = zoneId.id,
                     allDay = false,
-                    reminderMinutes = listOf(defaultReminderMinutes),
-                    repeatFrequency = "weekly",
-                    repeatCount = 8,
+                    reminderOffsets = listOf(defaultReminderMinutes),
+                    recurrenceRule = "FREQ=WEEKLY;COUNT=8",
                     confidence = 0.93,
                     missingFields = emptyList(),
                 ),
@@ -198,29 +201,32 @@ class DeepSeekCalendarParser(
         } else {
             listOf(
                 AiCalendarEvent(
+                    type = "REMINDER",
                     title = "给张三打电话",
                     notes = "由 mock DeepSeek 回应生成",
-                    startLocal = "${baseDate}T09:00:00",
-                    endLocal = "${baseDate}T09:30:00",
+                    trigger = "${baseDate}T09:00:00",
+                    timeZone = zoneId.id,
                     allDay = false,
-                    reminderMinutes = listOf(defaultReminderMinutes),
+                    reminderOffsets = listOf(defaultReminderMinutes),
                     confidence = 0.95,
                     missingFields = emptyList(),
                 ),
                 AiCalendarEvent(
+                    type = "EVENT",
                     title = "项目会",
                     notes = "由 mock DeepSeek 回应生成",
-                    startLocal = "${baseDate}T15:00:00",
-                    endLocal = "${baseDate}T15:30:00",
+                    start = "${baseDate}T15:00:00",
+                    end = "${baseDate}T15:30:00",
+                    timeZone = zoneId.id,
                     allDay = false,
-                    reminderMinutes = listOf(defaultReminderMinutes),
+                    reminderOffsets = listOf(defaultReminderMinutes),
                     confidence = 0.93,
                     missingFields = emptyList(),
                 ),
             )
         }
         val response = AiCalendarResponse(
-            events = events,
+            items = events,
             warnings = listOf("使用本地 mock DeepSeek 回应。"),
         )
 

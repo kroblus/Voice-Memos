@@ -5,6 +5,8 @@ import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.domain.RepeatRule
+import com.voicememos.aicalendar.ui.session.VoiceScheduleSession
+import com.voicememos.aicalendar.ui.session.VoiceTaskState
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -37,14 +39,10 @@ data class CalendarUiState(
     val themeMode: AppThemeMode = AppThemeMode.LIGHT,
     val onboardingSeen: Boolean = false,
     val events: List<CalendarEvent> = emptyList(),
-    val textInput: String = "",
-    val partialTranscript: String = "",
-    val isListening: Boolean = false,
-    val isParsing: Boolean = false,
+    val voiceSession: VoiceScheduleSession = VoiceScheduleSession.fresh(),
     val showInputCurtain: Boolean = false,
     val draftEditors: List<DraftEditor> = emptyList(),
     val showDraftSheet: Boolean = false,
-    val warnings: List<String> = emptyList(),
     val errorMessage: String? = null,
     val successMessage: String? = null,
     val showSettings: Boolean = false,
@@ -62,7 +60,28 @@ data class CalendarUiState(
     val showPrivacyDetails: Boolean = false,
     val showResetConfirmation: Boolean = false,
     val backupMessage: String? = null,
-)
+) {
+    val voiceTaskState: VoiceTaskState
+        get() = voiceSession.state
+
+    val textInput: String
+        get() = voiceSession.editedTranscript
+
+    val partialTranscript: String
+        get() = voiceSession.partialTranscript
+
+    val isListening: Boolean
+        get() = voiceSession.isListening
+
+    val isParsing: Boolean
+        get() = voiceSession.isParsing
+
+    val isSaving: Boolean
+        get() = voiceSession.isSaving
+
+    val warnings: List<String>
+        get() = voiceSession.warnings
+}
 
 data class DraftEditor(
     val draftId: String,

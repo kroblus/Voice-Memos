@@ -16,24 +16,29 @@ import com.voicememos.aicalendar.data.CalendarRepository
 import com.voicememos.aicalendar.data.SettingsRepository
 import com.voicememos.aicalendar.data.decodeCalendarBackup
 import com.voicememos.aicalendar.data.exportCalendarBackup
+import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.reminder.ReminderScheduler
 import com.voicememos.aicalendar.security.SecureApiKeyStore
+import com.voicememos.aicalendar.ui.session.VoiceScheduleSession
+import com.voicememos.aicalendar.ui.session.VoiceTaskState
 import com.voicememos.aicalendar.widget.ShengliWidgetProvider
 import java.io.InterruptedIOException
 import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -50,6 +55,8 @@ class CalendarViewModel(
         CalendarUiState(apiKeySaved = secureApiKeyStore.hasKey()),
     )
     val uiState: StateFlow<CalendarUiState> = _uiState.asStateFlow()
+    private var parseJob: Job? = null
+    private var saveJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -122,7 +129,21 @@ class CalendarViewModel(
     }
 
     fun openInputCurtain() {
-        _uiState.update { it.copy(showInputCurtain = true, errorMessage = null) }
+        _uiState.update { state ->
+            val session = if (
+                state.voiceTaskState == VoiceTaskState.Success &&
+                state.draftEditors.isEmpty()
+            ) {
+                VoiceScheduleSession.fresh()
+            } else {
+                state.voiceSession
+            }
+            state.copy(
+                voiceSession = session,
+                showInputCurtain = true,
+                errorMessage = null,
+            )
+        }
     }
 
     fun closeInputCurtain() {
@@ -203,33 +224,102 @@ class CalendarViewModel(
     }
 
     fun updateTextInput(value: String) {
-        _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                voiceSession = it.voiceSession.updateEditedTranscript(value),
+                errorMessage = null,
+            )
+        }
     }
 
     fun reuseTranscript(value: String) {
-        _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                voiceSession = VoiceScheduleSession.fresh().prepareTranscript(value),
+                errorMessage = null,
+            )
+        }
     }
 
     fun regenerateTranscript(value: String) {
-        _uiState.update { it.copy(textInput = value, partialTranscript = "", errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                voiceSession = VoiceScheduleSession.fresh().prepareTranscript(value),
+                errorMessage = null,
+            )
+        }
         parseText(value)
     }
 
     fun onListeningChanged(value: Boolean) {
-        _uiState.update { it.copy(isListening = value) }
+        _uiState.update { state ->
+            if (value &&
+                state.voiceTaskState in setOf(VoiceTaskState.Parsing, VoiceTaskState.Saving)
+            ) {
+                return@update state.copy(errorMessage = "当前任务仍在处理中，请稍候。")
+            }
+            val session = if (value) {
+                val base = if (
+                    state.voiceTaskState == VoiceTaskState.Success &&
+                    state.draftEditors.isEmpty()
+                ) {
+                    VoiceScheduleSession.fresh()
+                } else {
+                    state.voiceSession
+                }
+                base.startListening()
+            } else {
+                state.voiceSession.beginTranscribing()
+            }
+            state.copy(
+                voiceSession = session,
+                errorMessage = if (value) null else state.errorMessage,
+            )
+        }
     }
 
     fun onPartialTranscript(value: String) {
-        _uiState.update { it.copy(partialTranscript = value) }
+        _uiState.update { state ->
+            if (state.voiceTaskState in setOf(VoiceTaskState.Parsing, VoiceTaskState.Saving)) {
+                state
+            } else {
+                state.copy(voiceSession = state.voiceSession.updatePartialTranscript(value))
+            }
+        }
     }
 
     fun onFinalTranscript(value: String) {
-        _uiState.update { it.copy(textInput = value, partialTranscript = "") }
-        parseText(value)
+        _uiState.update { state ->
+            if (state.voiceTaskState in setOf(VoiceTaskState.Parsing, VoiceTaskState.Saving)) {
+                state
+            } else {
+                state.copy(
+                    voiceSession = state.voiceSession.completeTranscript(value),
+                    errorMessage = null,
+                )
+            }
+        }
     }
 
     fun showError(message: String) {
-        _uiState.update { it.copy(errorMessage = message) }
+        _uiState.update { state ->
+            val session = if (
+                state.voiceTaskState in setOf(
+                    VoiceTaskState.Listening,
+                    VoiceTaskState.Transcribing,
+                    VoiceTaskState.Parsing,
+                    VoiceTaskState.Saving,
+                )
+            ) {
+                state.voiceSession.fail(message)
+            } else {
+                state.voiceSession
+            }
+            state.copy(
+                voiceSession = session,
+                errorMessage = message,
+            )
+        }
     }
 
     fun parseCurrentText() {
@@ -243,54 +333,96 @@ class CalendarViewModel(
             showError("先说一句或输入一段日程。")
             return
         }
+        if (parseJob?.isActive == true ||
+            _uiState.value.voiceTaskState in setOf(
+                VoiceTaskState.Listening,
+                VoiceTaskState.Transcribing,
+                VoiceTaskState.Parsing,
+                VoiceTaskState.Saving,
+            )
+        ) {
+            val message = if (
+                _uiState.value.voiceTaskState in setOf(
+                    VoiceTaskState.Listening,
+                    VoiceTaskState.Transcribing,
+                )
+            ) {
+                "正在完成转写，请稍候。"
+            } else {
+                "正在理解当前内容，请稍候。"
+            }
+            _uiState.update { it.copy(errorMessage = message) }
+            return
+        }
 
-        viewModelScope.launch {
-            val apiKey = secureApiKeyStore.read()
-            if (apiKey.isNullOrBlank()) {
-                _uiState.update {
-                    it.copy(
-                        showSettings = true,
-                        errorMessage = "先在设置里保存 DeepSeek API key。",
-                    )
+        _uiState.update {
+            val prepared = it.voiceSession.prepareTranscript(transcript)
+            it.copy(
+                voiceSession = prepared.beginParsing(),
+                errorMessage = null,
+            )
+        }
+
+        parseJob = viewModelScope.launch {
+            try {
+                val apiKey = secureApiKeyStore.read()
+                if (apiKey.isNullOrBlank()) {
+                    val message = "先在设置里保存 DeepSeek API key。"
+                    _uiState.update {
+                        it.copy(
+                            voiceSession = it.voiceSession.fail(message),
+                            showInputCurtain = false,
+                            showSettings = true,
+                            errorMessage = message,
+                        )
+                    }
+                    return@launch
                 }
-                return@launch
-            }
 
-            _uiState.update {
-                it.copy(isParsing = true, warnings = emptyList(), errorMessage = null)
-            }
-
-            runCatching {
-                parser.parse(
+                val result = parser.parse(
                     transcript = transcript,
                     apiKey = apiKey,
                     defaultDurationMinutes = settingsRepository.getDefaultDurationMinutes(),
                     defaultReminderMinutes = settingsRepository.getDefaultReminderMinutes(),
                     zoneId = zoneId,
                 )
-            }.onSuccess { result ->
                 settingsRepository.addParseHistory(result.toHistoryItem(transcript))
+                val editors = result.events.map { draft -> draft.toEditor(zoneId) }
+                val sessionWarnings = (result.warnings + result.clarificationQuestions).distinct()
+                val errorMessage = if (result.events.isEmpty()) {
+                    sessionWarnings.firstOrNull() ?: "没有解析出可创建的日程。"
+                } else {
+                    null
+                }
                 _uiState.update {
+                    val session = when {
+                        result.events.isEmpty() -> it.voiceSession.fail(requireNotNull(errorMessage))
+                        result.needsConfirmation ||
+                            result.requiresClarification ||
+                            result.events.any { draft -> draft.needsClarification } ->
+                            it.voiceSession.needsClarification(sessionWarnings)
+                        else -> it.voiceSession.showPreview(sessionWarnings)
+                    }
                     it.copy(
-                        isParsing = false,
-                        draftEditors = result.events.map { draft -> draft.toEditor(zoneId) },
+                        voiceSession = session,
+                        draftEditors = editors,
                         showDraftSheet = result.events.isNotEmpty(),
                         showInputCurtain = false,
-                        warnings = result.warnings,
-                        errorMessage = if (result.events.isEmpty()) {
-                            result.warnings.firstOrNull() ?: "没有解析出可创建的日程。"
-                        } else {
-                            null
-                        },
+                        errorMessage = errorMessage,
                     )
                 }
-            }.onFailure { error ->
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val message = error.toUserMessage()
                 _uiState.update {
                     it.copy(
-                        isParsing = false,
-                        errorMessage = error.toUserMessage(),
+                        voiceSession = it.voiceSession.fail(message),
+                        errorMessage = message,
                     )
                 }
+            } finally {
+                parseJob = null
             }
         }
     }
@@ -309,6 +441,11 @@ class CalendarViewModel(
         _uiState.update { state ->
             val remaining = state.draftEditors.filterNot { it.draftId == draftId }
             state.copy(
+                voiceSession = if (remaining.isEmpty()) {
+                    state.voiceSession.returnToTranscript()
+                } else {
+                    state.voiceSession
+                },
                 draftEditors = remaining,
                 showDraftSheet = state.showDraftSheet && remaining.isNotEmpty(),
             )
@@ -316,7 +453,13 @@ class CalendarViewModel(
     }
 
     fun clearDrafts() {
-        _uiState.update { it.copy(draftEditors = emptyList(), showDraftSheet = false, warnings = emptyList()) }
+        _uiState.update {
+            it.copy(
+                voiceSession = it.voiceSession.returnToTranscript(),
+                draftEditors = emptyList(),
+                showDraftSheet = false,
+            )
+        }
     }
 
     fun showDraftSheet() {
@@ -330,67 +473,178 @@ class CalendarViewModel(
     }
 
     fun confirmDraft(draftId: String) {
+        if (saveJob?.isActive == true || _uiState.value.voiceTaskState == VoiceTaskState.Saving) {
+            _uiState.update { it.copy(errorMessage = "正在保存，请勿重复提交。") }
+            return
+        }
         val editor = _uiState.value.draftEditors.firstOrNull { it.draftId == draftId } ?: return
         val draft = editor.toDraft(zoneId)
         if (!draft.canCreate) {
-            showError("这个草稿还缺少时间或标题。")
+            val message = "这个草稿还缺少时间或标题。"
+            _uiState.update {
+                it.copy(
+                    voiceSession = it.voiceSession.needsClarification(listOf(message)),
+                    errorMessage = message,
+                )
+            }
             return
         }
 
-        viewModelScope.launch {
-            val events = draft.expandRepeats().map { occurrence ->
-                calendarRepository.createFromDraft(occurrence).also(reminderScheduler::schedule)
+        _uiState.update {
+            it.copy(
+                voiceSession = it.voiceSession.beginSaving(),
+                errorMessage = null,
+            )
+        }
+        saveJob = viewModelScope.launch {
+            val savedEvents = mutableListOf<CalendarEvent>()
+            try {
+                draft.expandRepeats().forEach { occurrence ->
+                    val event = calendarRepository.createFromDraft(occurrence)
+                    savedEvents += event
+                    reminderScheduler.schedule(event)
+                }
+                _uiState.update { state ->
+                    val remainingDrafts = state.draftEditors.filterNot { it.draftId == draftId }
+                    val completedSession = state.voiceSession.succeed(savedEvents.map { it.id })
+                    state.copy(
+                        voiceSession = if (remainingDrafts.isEmpty()) {
+                            completedSession
+                        } else {
+                            completedSession.showPreview(emptyList())
+                        },
+                        selectedDate = savedEvents.first().startAt.atZone(zoneId).toLocalDate(),
+                        draftEditors = remainingDrafts,
+                        showDraftSheet = remainingDrafts.isNotEmpty(),
+                        errorMessage = null,
+                        successMessage = "已保存 ${savedEvents.size} 项",
+                    )
+                }
+                ShengliWidgetProvider.updateAll(appContext)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val message = error.toUserMessage()
+                _uiState.update { state ->
+                    state.copy(
+                        voiceSession = if (savedEvents.isEmpty()) {
+                            state.voiceSession.fail(message)
+                        } else {
+                            state.voiceSession.partiallySucceed(
+                                createdIds = savedEvents.map { it.id },
+                                errorMessages = listOf(message),
+                            )
+                        },
+                        selectedDate = savedEvents.firstOrNull()
+                            ?.startAt
+                            ?.atZone(zoneId)
+                            ?.toLocalDate()
+                            ?: state.selectedDate,
+                        errorMessage = message,
+                        successMessage = savedEvents.takeIf { it.isNotEmpty() }
+                            ?.let { "已保存 ${it.size} 项，部分失败" },
+                    )
+                }
+                if (savedEvents.isNotEmpty()) {
+                    ShengliWidgetProvider.updateAll(appContext)
+                }
+            } finally {
+                saveJob = null
             }
-            _uiState.update { state ->
-                val remainingDrafts = state.draftEditors.filterNot { it.draftId == draftId }
-                state.copy(
-                    selectedDate = events.first().startAt.atZone(zoneId).toLocalDate(),
-                    draftEditors = remainingDrafts,
-                    showDraftSheet = remainingDrafts.isNotEmpty(),
-                    textInput = "",
-                    partialTranscript = "",
-                    errorMessage = null,
-                    successMessage = "已保存 ${events.size} 项",
-                )
-            }
-            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
     fun confirmAllDrafts() {
+        if (saveJob?.isActive == true || _uiState.value.voiceTaskState == VoiceTaskState.Saving) {
+            _uiState.update { it.copy(errorMessage = "正在保存，请勿重复提交。") }
+            return
+        }
         val editors = _uiState.value.draftEditors
         val preparedDrafts = editors.map { editor -> editor to editor.toDraft(zoneId) }
         val creatableDrafts = preparedDrafts.filter { (_, draft) -> draft.canCreate }
         if (creatableDrafts.isEmpty()) {
-            showError("有草稿缺少标题或时间，请先编辑。")
+            val message = "有草稿缺少标题或时间，请先编辑。"
+            _uiState.update {
+                it.copy(
+                    voiceSession = it.voiceSession.needsClarification(listOf(message)),
+                    errorMessage = message,
+                )
+            }
             return
         }
 
-        viewModelScope.launch {
-            val savedEvents = creatableDrafts.flatMap { (_, draft) ->
-                draft.expandRepeats().map { occurrence ->
-                    calendarRepository.createFromDraft(occurrence).also(reminderScheduler::schedule)
+        _uiState.update {
+            it.copy(
+                voiceSession = it.voiceSession.beginSaving(),
+                errorMessage = null,
+            )
+        }
+        saveJob = viewModelScope.launch {
+            val savedEvents = mutableListOf<CalendarEvent>()
+            val savedDraftIds = mutableSetOf<String>()
+            try {
+                creatableDrafts.forEach { (editor, draft) ->
+                    draft.expandRepeats().forEach { occurrence ->
+                        val event = calendarRepository.createFromDraft(occurrence)
+                        savedEvents += event
+                        reminderScheduler.schedule(event)
+                    }
+                    savedDraftIds += editor.draftId
                 }
+                _uiState.update { state ->
+                    val remainingDrafts = state.draftEditors.filterNot { it.draftId in savedDraftIds }
+                    val message = remainingDrafts.takeIf { it.isNotEmpty() }
+                        ?.let { "还有 ${it.size} 个草稿缺少标题或时间。" }
+                    state.copy(
+                        voiceSession = if (remainingDrafts.isEmpty()) {
+                            state.voiceSession.succeed(savedEvents.map { it.id })
+                        } else {
+                            state.voiceSession.partiallySucceed(
+                                createdIds = savedEvents.map { it.id },
+                                errorMessages = listOf(requireNotNull(message)),
+                            )
+                        },
+                        selectedDate = savedEvents.first().startAt.atZone(zoneId).toLocalDate(),
+                        draftEditors = remainingDrafts,
+                        showDraftSheet = remainingDrafts.isNotEmpty(),
+                        errorMessage = message,
+                        successMessage = "已保存 ${savedEvents.size} 项",
+                    )
+                }
+                ShengliWidgetProvider.updateAll(appContext)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                val message = error.toUserMessage()
+                _uiState.update { state ->
+                    val remainingDrafts = state.draftEditors.filterNot { it.draftId in savedDraftIds }
+                    state.copy(
+                        voiceSession = if (savedEvents.isEmpty()) {
+                            state.voiceSession.fail(message)
+                        } else {
+                            state.voiceSession.partiallySucceed(
+                                createdIds = savedEvents.map { it.id },
+                                errorMessages = listOf(message),
+                            )
+                        },
+                        selectedDate = savedEvents.firstOrNull()
+                            ?.startAt
+                            ?.atZone(zoneId)
+                            ?.toLocalDate()
+                            ?: state.selectedDate,
+                        draftEditors = remainingDrafts,
+                        showDraftSheet = remainingDrafts.isNotEmpty(),
+                        errorMessage = message,
+                        successMessage = savedEvents.takeIf { it.isNotEmpty() }
+                            ?.let { "已保存 ${it.size} 项，部分失败" },
+                    )
+                }
+                if (savedEvents.isNotEmpty()) {
+                    ShengliWidgetProvider.updateAll(appContext)
+                }
+            } finally {
+                saveJob = null
             }
-            val savedDraftIds = creatableDrafts.map { (editor, _) -> editor.draftId }.toSet()
-            _uiState.update { state ->
-                val remainingDrafts = state.draftEditors.filterNot { it.draftId in savedDraftIds }
-                state.copy(
-                    selectedDate = savedEvents.first().startAt.atZone(zoneId).toLocalDate(),
-                    draftEditors = remainingDrafts,
-                    showDraftSheet = remainingDrafts.isNotEmpty(),
-                    textInput = if (remainingDrafts.isEmpty()) "" else state.textInput,
-                    partialTranscript = if (remainingDrafts.isEmpty()) "" else state.partialTranscript,
-                    warnings = if (remainingDrafts.isEmpty()) emptyList() else state.warnings,
-                    errorMessage = if (remainingDrafts.isEmpty()) {
-                        null
-                    } else {
-                        "还有 ${remainingDrafts.size} 个草稿缺少标题或时间。"
-                    },
-                    successMessage = "已保存 ${savedEvents.size} 项",
-                )
-            }
-            ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
@@ -613,28 +867,6 @@ class CalendarViewModel(
 
     fun saveApiKey() {
         saveUserSettings(closeSettings = true)
-        return
-        val state = _uiState.value
-        val defaultReminder = state.defaultReminderMinutesInput.toIntOrNull()
-        val defaultDuration = state.defaultDurationMinutesInput.toIntOrNull()
-        if (defaultReminder == null || defaultDuration == null || defaultDuration <= 0) {
-            showError("默认提醒和默认时长需要填写有效数字。")
-            return
-        }
-        state.apiKeyInput.trim().takeIf { it.isNotEmpty() }?.let(secureApiKeyStore::save)
-        viewModelScope.launch {
-            settingsRepository.setDefaultReminderMinutes(defaultReminder ?: 10)
-            settingsRepository.setDefaultDurationMinutes(defaultDuration ?: 30)
-        }
-        _uiState.update {
-            it.copy(
-                apiKeyInput = "",
-                apiKeySaved = secureApiKeyStore.hasKey(),
-                showSettings = false,
-                errorMessage = null,
-                successMessage = "设置已保存",
-            )
-        }
     }
 
     fun clearApiKey() {

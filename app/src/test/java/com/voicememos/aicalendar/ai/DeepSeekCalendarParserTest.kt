@@ -1,5 +1,7 @@
 package com.voicememos.aicalendar.ai
 
+import com.voicememos.aicalendar.domain.ScheduleItemPriority
+import com.voicememos.aicalendar.domain.ScheduleItemType
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.time.Clock
@@ -50,7 +52,61 @@ class DeepSeekCalendarParserTest {
         assertTrue(requestBody.contains(""""max_tokens":1200"""))
         assertTrue(requestBody.contains(""""stream":false"""))
         assertTrue(requestBody.contains("明天中午11点提醒我打开电脑12点提醒我打开手机"))
-        assertTrue(requestBody.contains("Split this transcript into as many event objects"))
+        assertTrue(requestBody.contains("Split it into as many typed items"))
+        assertTrue(requestBody.contains("Never invent a key date"))
+        assertTrue(requestBody.contains("\\\"items\\\""))
+        assertTrue(requestBody.contains("\\\"requiresClarification\\\""))
+    }
+
+    @Test
+    fun mapsTypedItemsAndClarificationContract() = runTest {
+        val parser = parserWith(
+            CapturingInterceptor(
+                responseBody = completionResponse(
+                    """
+                    {
+                      "items": [
+                        {
+                          "type": "REMINDER",
+                          "title": "吃药",
+                          "trigger": "2026-06-17T21:00:00",
+                          "time_zone": "Asia/Shanghai",
+                          "reminder_offsets": [0],
+                          "confidence": 0.94,
+                          "missing_fields": [],
+                          "ambiguous_fields": []
+                        },
+                        {
+                          "type": "TODO",
+                          "title": "交作业",
+                          "due": "2026-06-18",
+                          "time_zone": "Asia/Shanghai",
+                          "priority": "HIGH",
+                          "confidence": 0.88,
+                          "missing_fields": [],
+                          "ambiguous_fields": []
+                        }
+                      ],
+                      "requiresClarification": false,
+                      "clarificationQuestions": [],
+                      "warnings": []
+                    }
+                    """.trimIndent(),
+                ),
+            ),
+        )
+
+        val result = parser.parse(
+            transcript = "明晚九点提醒我吃药，后天交作业",
+            apiKey = "unit-test-key",
+            zoneId = zoneId,
+        )
+
+        assertEquals(2, result.items.size)
+        assertEquals(ScheduleItemType.REMINDER, result.items[0].itemType)
+        assertEquals(ScheduleItemType.TODO, result.items[1].itemType)
+        assertEquals(ScheduleItemPriority.HIGH, result.items[1].priority)
+        assertTrue(result.clarificationQuestions.isEmpty())
     }
 
     @Test

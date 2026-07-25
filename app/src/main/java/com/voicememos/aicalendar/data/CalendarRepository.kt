@@ -17,6 +17,9 @@ class CalendarRepository(
     fun observeAllActive(): Flow<List<CalendarEvent>> =
         dao.observeAllActive().map { events -> events.map(CalendarEventEntity::toDomain) }
 
+    suspend fun futureScheduled(from: Instant): List<CalendarEvent> =
+        dao.futureScheduled(from.toEpochMilli()).map(CalendarEventEntity::toDomain)
+
     suspend fun createFromDraft(draft: DraftCalendarEvent): CalendarEvent {
         val entity = draft.toEntity()
         dao.upsert(entity)

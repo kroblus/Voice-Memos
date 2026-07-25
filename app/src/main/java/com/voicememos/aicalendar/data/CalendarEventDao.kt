@@ -41,6 +41,16 @@ interface CalendarEventDao {
         """
         SELECT * FROM calendar_events
         WHERE status = 'SCHEDULED'
+        AND startAtEpochMillis >= :fromEpochMillis
+        ORDER BY startAtEpochMillis ASC
+        """,
+    )
+    suspend fun futureScheduled(fromEpochMillis: Long): List<CalendarEventEntity>
+
+    @Query(
+        """
+        SELECT * FROM calendar_events
+        WHERE status = 'SCHEDULED'
         AND startAtEpochMillis >= :nowEpochMillis
         ORDER BY startAtEpochMillis ASC
         LIMIT 1

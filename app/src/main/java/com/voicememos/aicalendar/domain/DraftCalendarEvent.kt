@@ -30,7 +30,34 @@ data class DraftCalendarEvent(
     val aiConfidence: Double,
     val missingFields: List<String>,
     val repeatRule: RepeatRule? = null,
+    val itemType: ScheduleItemType = ScheduleItemType.EVENT,
+    val triggerAt: Instant? = null,
+    val dueAt: Instant? = null,
+    val location: String? = null,
+    val recurrenceRule: String? = null,
+    val priority: ScheduleItemPriority? = null,
+    val completed: Boolean = false,
+    val ambiguousFields: List<String> = emptyList(),
+    val timeZoneId: String? = null,
 ) {
+    val reminderOffsets: List<Int>
+        get() = reminderMinutes
+
+    val needsClarification: Boolean
+        get() = missingFields.isNotEmpty() || ambiguousFields.isNotEmpty()
+
+    val isSemanticallyComplete: Boolean
+        get() =
+            title.isNotBlank() &&
+                !needsClarification &&
+                when (itemType) {
+                    ScheduleItemType.EVENT -> startAt != null
+                    ScheduleItemType.REMINDER -> triggerAt != null
+                    ScheduleItemType.TODO -> true
+                }
+
     val canCreate: Boolean
-        get() = title.isNotBlank() && startAt != null && missingFields.isEmpty()
+        // The current Room layer still requires startAt. Keep this compatibility
+        // guard until typed EVENT/REMINDER/TODO persistence is introduced.
+        get() = isSemanticallyComplete && startAt != null
 }
