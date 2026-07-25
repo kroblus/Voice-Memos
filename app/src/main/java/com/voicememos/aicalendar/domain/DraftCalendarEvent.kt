@@ -57,7 +57,16 @@ data class DraftCalendarEvent(
                 }
 
     val canCreate: Boolean
-        // The current Room layer still requires startAt. Keep this compatibility
-        // guard until typed EVENT/REMINDER/TODO persistence is introduced.
-        get() = isSemanticallyComplete && startAt != null
+        get() =
+            isSemanticallyComplete &&
+                when (itemType) {
+                    ScheduleItemType.EVENT,
+                    ScheduleItemType.REMINDER,
+                    -> startAt != null
+
+                    // A TODO without a due time is valid. The persistence mapper
+                    // supplies a compatibility-only startAt anchor for the legacy
+                    // non-null column without changing the TODO's dueAt semantics.
+                    ScheduleItemType.TODO -> true
+                }
 }

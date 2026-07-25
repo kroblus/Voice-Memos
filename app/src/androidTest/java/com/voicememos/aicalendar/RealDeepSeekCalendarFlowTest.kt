@@ -100,6 +100,9 @@ class RealDeepSeekCalendarFlowTest {
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.openInputCurtainForTextEntry() {
         onNodeWithTag("voice-input-button").performSemanticsAction(SemanticsActions.OnClick)
         waitUntilNodeExists("voice-input-curtain")
+        onNodeWithTag("curtain-text-input-button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        waitForIdle()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitUntilNodeDoesNotExist(
@@ -115,6 +118,11 @@ class RealDeepSeekCalendarFlowTest {
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
         onNodeWithTag("draft-save-all-button").performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeExists("creation-view-schedule-button", timeoutMillis = 30_000)
+        assertAnyTextDisplayed("结果已逐项记录", substring = true)
+        onNodeWithTag("creation-view-schedule-button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeDoesNotExist("creation-view-schedule-button")
         waitUntilNodeDoesNotExist("draft-panel")
     }
 

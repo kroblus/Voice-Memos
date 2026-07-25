@@ -167,6 +167,20 @@ class DeepSeekCalendarParser(
                     missingFields = emptyList(),
                 ),
             )
+        } else if (normalizedTranscript.contains("打开电脑")) {
+            listOf(
+                AiCalendarEvent(
+                    type = "REMINDER",
+                    title = "打开电脑",
+                    notes = "由 mock DeepSeek 回应生成",
+                    trigger = "${baseDate}T11:00:00",
+                    timeZone = zoneId.id,
+                    allDay = false,
+                    reminderOffsets = listOf(defaultReminderMinutes),
+                    confidence = 0.95,
+                    missingFields = emptyList(),
+                ),
+            )
         } else if (normalizedTranscript.contains("每天")) {
             listOf(
                 AiCalendarEvent(

@@ -7,6 +7,8 @@ import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.domain.RepeatRule
 import com.voicememos.aicalendar.domain.ScheduleItemPriority
 import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.VoiceWorkflowError
+import com.voicememos.aicalendar.ui.session.CreationBatchSummary
 import com.voicememos.aicalendar.ui.session.VoiceScheduleSession
 import com.voicememos.aicalendar.ui.session.VoiceTaskState
 import java.time.Instant
@@ -35,6 +37,13 @@ enum class PermissionHealth(val label: String) {
     UNAVAILABLE("不可用"),
 }
 
+enum class AiConnectionState(val label: String) {
+    UNVERIFIED("未验证"),
+    CHECKING("正在验证"),
+    CONNECTED("已连接"),
+    FAILED("连接失败"),
+}
+
 data class CalendarUiState(
     val selectedDate: LocalDate = LocalDate.now(),
     val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
@@ -44,18 +53,26 @@ data class CalendarUiState(
     val voiceSession: VoiceScheduleSession = VoiceScheduleSession.fresh(),
     val showInputCurtain: Boolean = false,
     val draftEditors: List<DraftEditor> = emptyList(),
+    val draftRiskMessages: Map<String, List<String>> = emptyMap(),
+    val acceptedRiskDraftIds: Set<String> = emptySet(),
     val showDraftSheet: Boolean = false,
+    val creationSummary: CreationBatchSummary? = null,
+    val showCreationResult: Boolean = false,
     val errorMessage: String? = null,
+    val workflowError: VoiceWorkflowError? = null,
     val successMessage: String? = null,
     val showSettings: Boolean = false,
     val apiKeyInput: String = "",
     val apiKeySaved: Boolean = false,
+    val aiConnectionState: AiConnectionState = AiConnectionState.UNVERIFIED,
+    val aiConnectionMessage: String? = null,
     val defaultReminderMinutesInput: String = "10",
     val defaultDurationMinutesInput: String = "30",
     val agendaQuery: String = "",
     val agendaFilter: AgendaFilter = AgendaFilter.ALL,
     val eventEditor: EventEditor? = null,
     val parseHistory: List<ParseHistoryItem> = emptyList(),
+    val showHistory: Boolean = false,
     val microphonePermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
     val notificationPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
     val exactAlarmPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
@@ -83,6 +100,10 @@ data class CalendarUiState(
 
     val warnings: List<String>
         get() = voiceSession.warnings
+
+    fun canCreateDraft(draft: DraftEditor, zoneId: ZoneId): Boolean =
+        draft.canCreate(zoneId) &&
+            (draftRiskMessages[draft.draftId].isNullOrEmpty() || draft.draftId in acceptedRiskDraftIds)
 }
 
 data class DraftEditor(
@@ -115,6 +136,10 @@ data class DraftEditor(
         val end = parseLocalInstant(endLocal, allDay, editorZone)
         val trigger = parseLocalInstant(triggerLocal, allDay = false, zoneId = editorZone)
         val due = parseLocalInstant(dueLocal, allDay, editorZone)
+        val parsedRecurrence = recurrenceRule
+            .trim()
+            .takeIf(String::isNotEmpty)
+            ?.let(::parseSupportedRepeatRule)
         val missing = missingFields.toMutableSet()
         if (title.isBlank()) missing += "title" else missing.removeFields("title")
         if (runCatching { ZoneId.of(timeZoneId.trim()) }.isFailure) {
@@ -148,9 +173,7 @@ data class DraftEditor(
                 missing.removeFields("due", "due_local", "dueAt", "dueDateTime")
             }
             ScheduleItemType.TODO -> {
-                // The current persistence layer still requires a due instant as
-                // the compatibility startAt value.
-                if (due == null) {
+                if (dueLocal.isNotBlank() && due == null) {
                     missing += "due"
                 } else {
                     missing.removeFields("due", "due_local", "dueAt", "dueDateTime")
@@ -159,6 +182,11 @@ data class DraftEditor(
                 missing.removeFields("end", "end_local", "endAt", "endDateTime")
                 missing.removeFields("trigger", "trigger_local", "triggerAt", "triggerDateTime")
             }
+        }
+        if (recurrenceRule.isNotBlank() && parsedRecurrence == null) {
+            missing += "recurrence_rule"
+        } else {
+            missing.removeFields("recurrence_rule", "recurrenceRule")
         }
         val compatibilityStart = when (itemType) {
             ScheduleItemType.EVENT -> start
@@ -190,12 +218,22 @@ data class DraftEditor(
                         RepeatFrequency.WEEKLY -> 8
                     },
                 )
-            },
+            } ?: parsedRecurrence,
             itemType = itemType,
             triggerAt = trigger.takeIf { itemType == ScheduleItemType.REMINDER },
             dueAt = due.takeIf { itemType == ScheduleItemType.TODO },
             location = location.trim().takeIf { it.isNotEmpty() },
-            recurrenceRule = recurrenceRule.trim().takeIf { it.isNotEmpty() },
+            recurrenceRule = (
+                repeatFrequency?.let { frequency ->
+                    val count = repeatCount.toIntOrNull() ?: when (frequency) {
+                        RepeatFrequency.DAILY -> 7
+                        RepeatFrequency.WEEKLY -> 8
+                    }
+                    "FREQ=${frequency.name};COUNT=${count.coerceIn(2, 60)}"
+                } ?: parsedRecurrence?.let { rule ->
+                    "FREQ=${rule.frequency.name};COUNT=${rule.normalizedCount}"
+                }
+                ),
             priority = priority.takeIf { itemType == ScheduleItemType.TODO },
             completed = completed,
             ambiguousFields = ambiguousFields.distinct().sorted(),
@@ -363,5 +401,28 @@ private fun fieldDisplayName(field: String): String =
         "clarification" -> "整体信息"
         else -> field
     }
+
+private fun parseSupportedRepeatRule(value: String): RepeatRule? {
+    val tokens = value
+        .uppercase()
+        .split(";")
+        .map { token -> token.split("=", limit = 2) }
+    if (tokens.any { it.size != 2 || it[0].isBlank() || it[1].isBlank() }) return null
+    val values = tokens.associate { it[0].trim() to it[1].trim() }
+    if (values.size != tokens.size || values.keys !in setOf(setOf("FREQ"), setOf("FREQ", "COUNT"))) {
+        return null
+    }
+    val frequency = when (values["FREQ"]) {
+        "DAILY" -> RepeatFrequency.DAILY
+        "WEEKLY" -> RepeatFrequency.WEEKLY
+        else -> return null
+    }
+    val count = values["COUNT"]?.toIntOrNull() ?: when (frequency) {
+        RepeatFrequency.DAILY -> 7
+        RepeatFrequency.WEEKLY -> 8
+    }
+    if (count !in 2..60) return null
+    return RepeatRule(frequency = frequency, count = count)
+}
 
 private val EditorDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")

@@ -47,8 +47,16 @@ interface CalendarEventDao {
         """
         SELECT * FROM calendar_events
         WHERE status = 'SCHEDULED'
-        AND startAtEpochMillis >= :fromEpochMillis
-        ORDER BY startAtEpochMillis ASC
+        AND CASE itemType
+                WHEN 'REMINDER' THEN triggerAtEpochMillis
+                WHEN 'TODO' THEN dueAtEpochMillis
+                ELSE startAtEpochMillis
+            END >= :fromEpochMillis
+        ORDER BY CASE itemType
+                WHEN 'REMINDER' THEN triggerAtEpochMillis
+                WHEN 'TODO' THEN dueAtEpochMillis
+                ELSE startAtEpochMillis
+            END ASC
         """,
     )
     suspend fun futureScheduled(fromEpochMillis: Long): List<CalendarEventEntity>
@@ -57,8 +65,16 @@ interface CalendarEventDao {
         """
         SELECT * FROM calendar_events
         WHERE status = 'SCHEDULED'
-        AND startAtEpochMillis >= :nowEpochMillis
-        ORDER BY startAtEpochMillis ASC
+        AND CASE itemType
+                WHEN 'REMINDER' THEN triggerAtEpochMillis
+                WHEN 'TODO' THEN dueAtEpochMillis
+                ELSE startAtEpochMillis
+            END >= :nowEpochMillis
+        ORDER BY CASE itemType
+                WHEN 'REMINDER' THEN triggerAtEpochMillis
+                WHEN 'TODO' THEN dueAtEpochMillis
+                ELSE startAtEpochMillis
+            END ASC
         LIMIT 1
         """,
     )
@@ -70,10 +86,26 @@ interface CalendarEventDao {
     @Query(
         """
         UPDATE calendar_events
+        SET notificationStatus = :notificationStatus,
+            updatedAtEpochMillis = :updatedAt
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateNotificationStatus(
+        id: String,
+        notificationStatus: String,
+        updatedAt: Long,
+    )
+
+    @Query(
+        """
+        UPDATE calendar_events
         SET title = :title,
             notes = :notes,
             startAtEpochMillis = :startAt,
             endAtEpochMillis = :endAt,
+            triggerAtEpochMillis = :triggerAt,
+            dueAtEpochMillis = :dueAt,
             allDay = :allDay,
             reminderMinutesCsv = :reminderMinutes,
             updatedAtEpochMillis = :updatedAt
@@ -86,6 +118,8 @@ interface CalendarEventDao {
         notes: String?,
         startAt: Long,
         endAt: Long?,
+        triggerAt: Long?,
+        dueAt: Long?,
         allDay: Boolean,
         reminderMinutes: String,
         updatedAt: Long,

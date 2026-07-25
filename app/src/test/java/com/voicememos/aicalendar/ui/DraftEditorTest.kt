@@ -2,6 +2,7 @@ package com.voicememos.aicalendar.ui
 
 import com.voicememos.aicalendar.domain.ScheduleItemPriority
 import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.RepeatFrequency
 import java.time.Instant
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
@@ -72,6 +73,63 @@ class DraftEditorTest {
         assertEquals(ScheduleItemType.TODO, draft.itemType)
         assertEquals(draft.dueAt, draft.startAt)
         assertEquals(ScheduleItemPriority.NORMAL, draft.priority)
+    }
+
+    @Test
+    fun todoWithoutDueIsCreatableFromEditor() {
+        val editor = editor(
+            itemType = ScheduleItemType.TODO,
+            dueLocal = "",
+        )
+
+        val draft = editor.toDraft(zoneId)
+
+        assertTrue(editor.canCreate(zoneId))
+        assertTrue(draft.canCreate)
+        assertNull(draft.startAt)
+        assertNull(draft.dueAt)
+    }
+
+    @Test
+    fun supportedRruleIsNormalizedBeforeDraftCreation() {
+        val editor = editor(
+            startLocal = "2026-07-26 09:30",
+            endLocal = "2026-07-26 10:30",
+            recurrenceRule = " freq = weekly ; count = 4 ",
+        )
+
+        val draft = editor.toDraft(zoneId)
+
+        assertTrue(editor.canCreate(zoneId))
+        assertEquals("FREQ=WEEKLY;COUNT=4", draft.recurrenceRule)
+        assertEquals(RepeatFrequency.WEEKLY, draft.repeatRule?.frequency)
+        assertEquals(4, draft.repeatRule?.normalizedCount)
+        assertFalse("recurrence_rule" in draft.missingFields)
+    }
+
+    @Test
+    fun invalidOrUnsupportedRruleBlocksDraftCreation() {
+        val invalidRules = listOf(
+            "FREQ=MONTHLY;COUNT=4",
+            "FREQ=WEEKLY;INTERVAL=2",
+            "FREQ=DAILY;COUNT=1",
+            "FREQ=DAILY;COUNT=61",
+            "FREQ=WEEKLY;COUNT=4;COUNT=5",
+        )
+
+        invalidRules.forEach { rule ->
+            val editor = editor(
+                startLocal = "2026-07-26 09:30",
+                endLocal = "2026-07-26 10:30",
+                recurrenceRule = rule,
+            )
+            val draft = editor.toDraft(zoneId)
+
+            assertFalse("Rule should be blocked: $rule", editor.canCreate(zoneId))
+            assertTrue("recurrence_rule" in draft.missingFields)
+            assertNull(draft.recurrenceRule)
+            assertNull(draft.repeatRule)
+        }
     }
 
     @Test

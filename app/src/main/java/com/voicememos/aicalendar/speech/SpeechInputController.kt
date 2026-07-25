@@ -18,6 +18,7 @@ class SpeechInputController(
     private val appContext = context.applicationContext
     private var recognizer: SpeechRecognizer? = null
     private var recognitionActive: Boolean = false
+    private var recognitionGeneration: Long = 0
 
     val isAvailable: Boolean
         get() = SpeechRecognizer.isRecognitionAvailable(appContext)
@@ -28,12 +29,14 @@ class SpeechInputController(
             return
         }
 
+        val generation = ++recognitionGeneration
         val speechRecognizer = recognizer ?: SpeechRecognizer.createSpeechRecognizer(appContext)
             .also { recognizer = it }
 
         speechRecognizer.setRecognitionListener(
             object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
+                    if (generation != recognitionGeneration) return
                     recognitionActive = true
                     onListeningChanged(true)
                 }
@@ -42,21 +45,24 @@ class SpeechInputController(
                 override fun onRmsChanged(rmsdB: Float) = Unit
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
                 override fun onEndOfSpeech() {
-                    reportTranscribing()
+                    reportTranscribing(generation)
                 }
 
                 override fun onError(error: Int) {
-                    reportTranscribing()
+                    if (generation != recognitionGeneration) return
+                    reportTranscribing(generation)
                     onError(error.toReadableMessage())
                 }
 
                 override fun onResults(results: Bundle?) {
-                    reportTranscribing()
+                    if (generation != recognitionGeneration) return
+                    reportTranscribing(generation)
                     results?.bestText()?.let(onFinalResult)
                         ?: onError("没有识别到语音，可以直接输入文字。")
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
+                    if (generation != recognitionGeneration) return
                     partialResults?.bestText()?.let(onPartialResult)
                 }
 
@@ -69,11 +75,18 @@ class SpeechInputController(
 
     fun stop() {
         recognizer?.stopListening()
-        reportTranscribing()
+        reportTranscribing(recognitionGeneration)
+    }
+
+    fun cancel() {
+        recognitionGeneration += 1
+        recognizer?.cancel()
+        recognitionActive = false
     }
 
     fun destroy() {
         val wasActive = recognitionActive
+        recognitionGeneration += 1
         recognizer?.destroy()
         recognizer = null
         recognitionActive = false
@@ -100,7 +113,8 @@ class SpeechInputController(
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
 
-    private fun reportTranscribing() {
+    private fun reportTranscribing(generation: Long) {
+        if (generation != recognitionGeneration) return
         recognitionActive = false
         onListeningChanged(false)
     }

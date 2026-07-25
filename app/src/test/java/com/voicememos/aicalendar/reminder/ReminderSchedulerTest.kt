@@ -2,6 +2,7 @@ package com.voicememos.aicalendar.reminder
 
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
 import com.voicememos.aicalendar.domain.ScheduleItemType
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -10,6 +11,42 @@ import org.junit.Test
 
 class ReminderSchedulerTest {
     private val now = Instant.parse("2026-07-25T08:00:00Z")
+
+    @Test
+    fun scheduleResultsMapToPersistedNotificationStatuses() {
+        assertEquals(NotificationStatus.SCHEDULED, ScheduleResult.EXACT.toNotificationStatus())
+        assertEquals(NotificationStatus.SCHEDULED, ScheduleResult.INEXACT.toNotificationStatus())
+        assertEquals(NotificationStatus.FAILED, ScheduleResult.FAILED.toNotificationStatus())
+        assertEquals(NotificationStatus.FAILED, ScheduleResult.SKIPPED_PAST.toNotificationStatus())
+        assertEquals(
+            NotificationStatus.NOT_REQUIRED,
+            ScheduleResult.NOT_REQUIRED.toNotificationStatus(),
+        )
+    }
+
+    @Test
+    fun scheduleBatchAccountsForNotificationPermissionAndFailures() {
+        assertEquals(
+            NotificationStatus.SCHEDULED,
+            mapOf(0 to ScheduleResult.EXACT, 10 to ScheduleResult.INEXACT)
+                .toNotificationStatus(notificationAllowed = true),
+        )
+        assertEquals(
+            NotificationStatus.FAILED,
+            mapOf(0 to ScheduleResult.EXACT)
+                .toNotificationStatus(notificationAllowed = false),
+        )
+        assertEquals(
+            NotificationStatus.FAILED,
+            mapOf(0 to ScheduleResult.EXACT, 10 to ScheduleResult.SKIPPED_PAST)
+                .toNotificationStatus(notificationAllowed = true),
+        )
+        assertEquals(
+            NotificationStatus.NOT_REQUIRED,
+            emptyMap<Int, ScheduleResult>()
+                .toNotificationStatus(notificationAllowed = true),
+        )
+    }
 
     @Test
     fun eventUsesStartAtAsReminderAnchor() {

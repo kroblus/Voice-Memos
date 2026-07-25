@@ -54,7 +54,6 @@ abstract class AppDatabase : RoomDatabase() {
                     "shengli.db",
                 )
                     .addMigrations(MIGRATION_1_2)
-                    .fallbackToDestructiveMigration(false)
                     .build()
                     .also { instance = it }
             }

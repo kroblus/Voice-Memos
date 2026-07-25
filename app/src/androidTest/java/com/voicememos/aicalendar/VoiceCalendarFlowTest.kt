@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onFirst
@@ -22,6 +23,7 @@ import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.rule.GrantPermissionRule
 import com.voicememos.aicalendar.data.AppDatabase
 import com.voicememos.aicalendar.security.SecureApiKeyStore
+import java.time.YearMonth
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -68,18 +70,34 @@ class VoiceCalendarFlowTest {
         composeRule.assertAnyTextContains("打开手机")
         composeRule.onNodeWithTag("draft-save-all-button").assertTextContains("创建 2 项")
 
-        composeRule.saveAllDrafts()
+        composeRule.saveAllDrafts("打开电脑", "打开手机")
 
         composeRule.waitUntilAnyTextContains("打开电脑")
         composeRule.scrollEventListToText("打开手机")
         composeRule.assertAnyTextContains("打开手机")
         composeRule.openInputCurtainForTextEntry()
         composeRule.onNodeWithTag("parse-history-row").assertDoesNotExist()
+        assertTrue(
+            "Recording curtain must not embed recognition history actions.",
+            composeRule.onAllNodesWithText("查看上次结果").fetchSemanticsNodes().isEmpty(),
+        )
         composeRule.closeInputCurtain()
+
+        composeRule.onNodeWithTag("history-button").performClick()
+        composeRule.waitUntilNodeExists("parse-history-row")
+        composeRule.waitUntilAnyTextContains(
+            "明天中午11点提醒我打开电脑12点提醒我打开手机",
+        )
+        composeRule.onAllNodesWithText("查看上次结果").onFirst().performClick()
+        composeRule.waitUntilAnyTextContains("提醒 · 打开电脑")
+        composeRule.assertAnyTextContains("提醒 · 打开手机")
+        composeRule.onNodeWithContentDescription("关闭识别历史").performClick()
+        composeRule.waitUntilNodeDoesNotExist("parse-history-row")
 
         composeRule.onNodeWithTag("settings-button").performClick()
         composeRule.waitUntilNodeExists("api-key-field")
         composeRule.onNodeWithTag("settings-clear-key-button").performClick()
+        composeRule.onNodeWithTag("settings-cancel-button").performClick()
         composeRule.waitUntilNodeDoesNotExist("api-key-field")
     }
 
@@ -106,7 +124,7 @@ class VoiceCalendarFlowTest {
         composeRule.waitUntilNodeExists("draft-panel")
         composeRule.assertAnyTextDisplayed("喝水")
         composeRule.assertAnyTextContains("每天，共 7 次")
-        composeRule.saveAllDrafts()
+        composeRule.saveAllDrafts("喝水")
 
         val savedCount = runBlocking {
             AppDatabase.get(ApplicationProvider.getApplicationContext())
@@ -137,7 +155,7 @@ class VoiceCalendarFlowTest {
             .performSemanticsAction(SemanticsActions.OnClick)
 
         composeRule.waitUntilNodeExists("draft-panel")
-        composeRule.saveAllDrafts()
+        composeRule.saveAllDrafts("打开电脑")
 
         composeRule.onNodeWithTag("view-mode-day").performClick()
         composeRule.onNodeWithTag("day-next-event-banner").assertIsDisplayed()
@@ -161,6 +179,9 @@ class VoiceCalendarFlowTest {
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.openInputCurtainForTextEntry() {
         onNodeWithTag("voice-input-button").performSemanticsAction(SemanticsActions.OnClick)
         waitUntilNodeExists("voice-input-curtain")
+        onNodeWithTag("curtain-text-input-button")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        waitForIdle()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.closeInputCurtain() {
@@ -169,11 +190,17 @@ class VoiceCalendarFlowTest {
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertMonthHeaderAlignsWithDates() {
-        val mondayCenter = onNodeWithTag("weekday-1").fetchSemanticsNode().boundsInRoot.center.x
+        val firstDayColumn = YearMonth.now().atDay(1).dayOfWeek.value % 7
+        val weekdayCenter = onNodeWithTag("weekday-$firstDayColumn")
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .center
+            .x
         val firstDayCenter = onNodeWithTag("day-1").fetchSemanticsNode().boundsInRoot.center.x
         assertTrue(
-            "Weekday header and date column are misaligned. weekday=$mondayCenter day=$firstDayCenter",
-            kotlin.math.abs(mondayCenter - firstDayCenter) <= 1f,
+            "Weekday header and date column are misaligned. " +
+                "weekday=$weekdayCenter day=$firstDayCenter",
+            kotlin.math.abs(weekdayCenter - firstDayCenter) <= 1f,
         )
     }
 
@@ -216,9 +243,28 @@ class VoiceCalendarFlowTest {
         }
     }
 
-    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts() {
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.saveAllDrafts(
+        vararg expectedTitles: String,
+    ) {
         onNodeWithTag("draft-save-all-button").performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeExists("creation-view-schedule-button")
+        waitUntilAnyTextContains("结果已逐项记录")
+        expectedTitles.forEach { title -> assertCreatedOutcome(title) }
+        onNodeWithTag("creation-view-schedule-button")
+            .assertTextContains("查看日程")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        waitUntilNodeDoesNotExist("creation-view-schedule-button")
         waitUntilNodeDoesNotExist("draft-panel")
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.assertCreatedOutcome(
+        title: String,
+    ) {
+        waitUntil(10_000) {
+            onAllNodesWithText(title, substring = true).fetchSemanticsNodes().isNotEmpty() &&
+                onAllNodesWithText("已创建", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onAllNodesWithText(title, substring = true).onFirst().assertIsDisplayed()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.dismissOnboardingIfPresent() {

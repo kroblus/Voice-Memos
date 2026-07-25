@@ -1,6 +1,6 @@
 # 声历
 
-声历是一款语音优先的本地 AI 日历 Android 应用。用户说出一段自然语言，应用用系统语音识别转文字，再调用 DeepSeek 将文本解析成一个或多个日程草稿；确认后写入应用内本地日历并安排本地提醒。
+声历是一款语音优先的本地 AI 日历 Android 应用。用户说出一段自然语言后，可以先编辑完整转写，再由 DeepSeek 整理为一个或多个事件、提醒或待办；模糊信息会被标出，用户预览确认后才写入应用内日历。
 
 ## 当前范围
 
@@ -9,10 +9,15 @@
 - 用户在设置中自填 DeepSeek API key
 - API key 仅保存在本机 Android Keystore 加密存储中
 - 语音输入使用 Android `SpeechRecognizer`
-- 本地事件使用 Room 保存
+- 本地事项使用 Room 保存，并明确区分 `EVENT`、`REMINDER`、`TODO`
+- 关键时间缺失或歧义时阻止创建，冲突和过去时间需要显式确认
+- 多事项逐项保存，失败项可重试，同一会话使用幂等键防止重复创建
+- 创建结果可撤销；识别历史提供编辑原文、重新解析、查看结果和删除
 - 每个事件默认包含 `0` 分钟准点提醒
+- 无精确闹钟能力时会明确降级为近似提醒；重启、升级和时区变化后重建未来提醒
 - 支持 JSON 备份、JSON 导入和 ICS 导出
 - 隐式系统备份已关闭，应用只使用显式本地备份
+- `compileSdk` / `targetSdk` 36，当前版本 `0.2.0`
 
 ## 设计稿
 
@@ -32,6 +37,11 @@
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug :app:assembleDebugAndroidTest :app:connectedDebugAndroidTest --console=plain
 ```
+
+语音任务流审计、迁移、权限边界和验收结果见：
+
+- [docs/voice-workflow-audit-and-plan.md](docs/voice-workflow-audit-and-plan.md)
+- [docs/voice-workflow-delivery-report.md](docs/voice-workflow-delivery-report.md)
 
 真实 DeepSeek 设备流程测试需要在仓库根目录放置已忽略的 `deepseekapi.txt`，然后运行：
 

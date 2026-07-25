@@ -38,8 +38,13 @@ fun DraftCalendarEvent.toEntity(
     now: Instant = Instant.now(),
     creationKey: String? = null,
 ): CalendarEventEntity {
-    val start = requireNotNull(startAt ?: triggerAt ?: dueAt) {
-        "Draft must have startAt, triggerAt, or dueAt before it can be persisted."
+    val start = when (itemType) {
+        ScheduleItemType.TODO -> dueAt ?: now
+        ScheduleItemType.EVENT,
+        ScheduleItemType.REMINDER,
+        -> requireNotNull(startAt ?: triggerAt ?: dueAt) {
+            "Draft must have startAt, triggerAt, or dueAt before it can be persisted."
+        }
     }
     return CalendarEventEntity(
         id = UUID.randomUUID().toString(),

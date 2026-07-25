@@ -1,8 +1,12 @@
 package com.voicememos.aicalendar.reminder
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
 import com.voicememos.aicalendar.data.AppDatabase
 import com.voicememos.aicalendar.data.CalendarRepository
 import java.time.Instant
@@ -23,8 +27,20 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
                     AppDatabase.get(appContext).calendarEventDao(),
                 )
                 val scheduler = ReminderScheduler(appContext)
+                val notificationAllowed =
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                        appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                        PackageManager.PERMISSION_GRANTED
                 repository.futureScheduled(Instant.now())
-                    .forEach { event -> scheduler.scheduleWithResults(event) }
+                    .forEach { event ->
+                        val results = scheduler.scheduleWithResults(event)
+                        repository.updateNotificationStatus(
+                            event.id,
+                            results.toNotificationStatus(notificationAllowed),
+                        )
+                    }
+            }.onFailure { error ->
+                Log.e(TAG, "Unable to restore local reminders.", error)
             }
             pendingResult.finish()
         }
@@ -40,5 +56,6 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
         )
         const val ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED =
             "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"
+        const val TAG = "ReminderReschedule"
     }
 }

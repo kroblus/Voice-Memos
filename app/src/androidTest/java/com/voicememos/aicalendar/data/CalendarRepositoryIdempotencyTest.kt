@@ -5,6 +5,9 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import java.time.Instant
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -49,6 +52,27 @@ class CalendarRepositoryIdempotencyTest {
             first.id,
             database.calendarEventDao()
                 .findByCreationKey("session-1:item-1")
+                ?.id,
+        )
+    }
+
+    @Test
+    fun concurrentCreationWithSameKeyPersistsOneEvent() = runBlocking {
+        val repository = CalendarRepository(database.calendarEventDao())
+        val results = (1..8).map { attempt ->
+            async(Dispatchers.Default) {
+                repository.createFromDraft(
+                    draft = draft(title = "并发提交 $attempt"),
+                    creationKey = "session-concurrent:item-1",
+                )
+            }
+        }.awaitAll()
+
+        assertEquals(1, results.map { it.id }.distinct().size)
+        assertEquals(
+            results.first().id,
+            database.calendarEventDao()
+                .findByCreationKey("session-concurrent:item-1")
                 ?.id,
         )
     }

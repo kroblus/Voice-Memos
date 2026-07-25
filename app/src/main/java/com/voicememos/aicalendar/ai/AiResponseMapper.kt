@@ -540,7 +540,10 @@ object AiResponseMapper {
         "reminder_minutes" to "reminder_offsets",
         "clarification" to "clarification",
     )
-    private val SUPPORTED_RECURRENCE_KEYS = setOf("FREQ", "COUNT", "INTERVAL", "BYDAY", "UNTIL")
+    // The local recurrence expander currently executes only frequency + count.
+    // Reject richer RRULE tokens instead of persisting a rule that would be
+    // displayed but silently scheduled incorrectly.
+    private val SUPPORTED_RECURRENCE_KEYS = setOf("FREQ", "COUNT")
     private const val MIN_REPEAT_COUNT = 2
     private const val MAX_REPEAT_COUNT = 60
     private const val MAX_REMINDER_OFFSET_MINUTES = 525_600

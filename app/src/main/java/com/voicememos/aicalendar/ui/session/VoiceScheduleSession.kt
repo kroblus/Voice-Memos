@@ -90,6 +90,19 @@ data class VoiceScheduleSession(
             updatedAt = now,
         )
 
+    fun switchToTextInput(now: Instant = Instant.now()): VoiceScheduleSession {
+        val currentText = partialTranscript.ifBlank { editedTranscript }
+        return copy(
+            state = if (currentText.isBlank()) VoiceTaskState.Idle else VoiceTaskState.TranscriptReady,
+            editedTranscript = currentText,
+            partialTranscript = "",
+            listeningStartedAt = null,
+            warnings = emptyList(),
+            errors = emptyList(),
+            updatedAt = now,
+        )
+    }
+
     fun prepareTranscript(
         value: String,
         now: Instant = Instant.now(),

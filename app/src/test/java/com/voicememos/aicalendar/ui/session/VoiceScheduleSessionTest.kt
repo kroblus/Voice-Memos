@@ -63,6 +63,20 @@ class VoiceScheduleSessionTest {
     }
 
     @Test
+    fun switchingToTextInputPreservesPartialSpeechAndMakesItEditable() {
+        val session = VoiceScheduleSession.fresh(Instant.EPOCH)
+            .startListening(Instant.EPOCH.plusSeconds(1))
+            .updatePartialTranscript("明天下午三点")
+            .switchToTextInput(Instant.EPOCH.plusSeconds(2))
+
+        assertEquals(VoiceTaskState.TranscriptReady, session.state)
+        assertEquals("明天下午三点", session.editedTranscript)
+        assertEquals("", session.partialTranscript)
+        assertEquals(null, session.listeningStartedAt)
+        assertTrue(session.canBeginParsing)
+    }
+
+    @Test
     fun clarificationPreviewAndSaveUseOneSession() {
         val prepared = VoiceScheduleSession.fresh(Instant.EPOCH)
             .prepareTranscript("下周找导师")

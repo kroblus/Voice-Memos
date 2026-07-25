@@ -24,6 +24,24 @@ class DeepSeekCalendarParserTest {
     private val clock: Clock = Clock.fixed(Instant.parse("2026-06-16T01:00:00Z"), zoneId)
 
     @Test
+    fun mockParserKeepsSingleRequestedReminderTitle() = runTest {
+        val parser = DeepSeekCalendarParser(
+            client = OkHttpClient(),
+            clock = clock,
+        )
+
+        val result = parser.parse(
+            transcript = "明天中午11点提醒我打开电脑",
+            apiKey = "mock-deepseek",
+            zoneId = zoneId,
+        )
+
+        assertEquals(1, result.events.size)
+        assertEquals("打开电脑", result.events.single().title)
+        assertEquals(ScheduleItemType.REMINDER, result.events.single().itemType)
+    }
+
+    @Test
     fun sendsDeepSeekJsonContractAndMapsEvents() = runTest {
         val interceptor = CapturingInterceptor(
             responseBody = completionResponse(

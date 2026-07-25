@@ -3,6 +3,7 @@ package com.voicememos.aicalendar.data
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -53,6 +54,18 @@ class CalendarRepository(
         )
     }
 
+    suspend fun updateNotificationStatus(
+        id: String,
+        status: NotificationStatus,
+        updatedAt: Instant = Instant.now(),
+    ) {
+        dao.updateNotificationStatus(
+            id = id,
+            notificationStatus = status.name,
+            updatedAt = updatedAt.toEpochMilli(),
+        )
+    }
+
     suspend fun updateDetails(
         original: CalendarEvent,
         title: String,
@@ -62,11 +75,22 @@ class CalendarRepository(
         allDay: Boolean,
         reminderMinutes: List<Int>,
     ): CalendarEvent {
+        val updatedTriggerAt = when (original.itemType) {
+            com.voicememos.aicalendar.domain.ScheduleItemType.REMINDER -> startAt
+            else -> original.triggerAt
+        }
+        val updatedDueAt = when {
+            original.itemType == com.voicememos.aicalendar.domain.ScheduleItemType.TODO &&
+                original.dueAt != null -> startAt
+            else -> original.dueAt
+        }
         val updated = original.copy(
             title = title.trim(),
             notes = notes?.trim()?.takeIf { it.isNotEmpty() },
             startAt = startAt,
             endAt = endAt,
+            triggerAt = updatedTriggerAt,
+            dueAt = updatedDueAt,
             allDay = allDay,
             reminderMinutes = reminderMinutes.toReminderCsv().toReminderMinutes(),
         )
@@ -76,6 +100,8 @@ class CalendarRepository(
             notes = updated.notes,
             startAt = updated.startAt.toEpochMilli(),
             endAt = updated.endAt?.toEpochMilli(),
+            triggerAt = updated.triggerAt?.toEpochMilli(),
+            dueAt = updated.dueAt?.toEpochMilli(),
             allDay = updated.allDay,
             reminderMinutes = updated.reminderMinutes.toReminderCsv(),
             updatedAt = Instant.now().toEpochMilli(),

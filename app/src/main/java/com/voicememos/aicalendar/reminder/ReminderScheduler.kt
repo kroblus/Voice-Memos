@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.voicememos.aicalendar.domain.CalendarEvent
+import com.voicememos.aicalendar.domain.NotificationStatus
 import com.voicememos.aicalendar.domain.ScheduleItemType
 import java.time.Clock
 import java.time.Instant
@@ -18,6 +19,32 @@ enum class ScheduleResult {
     SKIPPED_PAST,
     NOT_REQUIRED,
     FAILED,
+}
+
+internal fun ScheduleResult.toNotificationStatus(): NotificationStatus =
+    when (this) {
+        ScheduleResult.EXACT,
+        ScheduleResult.INEXACT,
+        -> NotificationStatus.SCHEDULED
+        ScheduleResult.SKIPPED_PAST,
+        ScheduleResult.FAILED,
+        -> NotificationStatus.FAILED
+        ScheduleResult.NOT_REQUIRED -> NotificationStatus.NOT_REQUIRED
+    }
+
+internal fun Map<Int, ScheduleResult>.toNotificationStatus(
+    notificationAllowed: Boolean,
+): NotificationStatus {
+    if (isEmpty() || values.all { it == ScheduleResult.NOT_REQUIRED }) {
+        return NotificationStatus.NOT_REQUIRED
+    }
+    if (
+        !notificationAllowed ||
+        values.any { it == ScheduleResult.FAILED || it == ScheduleResult.SKIPPED_PAST }
+    ) {
+        return NotificationStatus.FAILED
+    }
+    return NotificationStatus.SCHEDULED
 }
 
 internal fun CalendarEvent.reminderAnchor(): Instant? =

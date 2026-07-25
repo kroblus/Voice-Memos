@@ -6,4 +6,190 @@
     <string name="widget_empty_subtitle">打开声历说一句</string>
     <string name="widget_voice_entry">说一句</string>
     <string name="widget_description">显示声历的下一项日程</string>
+
+    <!-- Shared workflow actions -->
+    <string name="common_cancel">取消</string>
+    <string name="common_clear">清空</string>
+    <string name="common_close">关闭</string>
+    <string name="common_open_settings">打开设置</string>
+    <string name="common_save">保存</string>
+
+    <!-- Voice workflow -->
+    <string name="voice_permission_required">需要麦克风权限才能语音输入。</string>
+    <string name="voice_fab_finish">说完了</string>
+    <string name="voice_fab_organizing">整理中</string>
+    <string name="voice_fab_schedule">说日程</string>
+    <string name="voice_title_idle">说出安排</string>
+    <string name="voice_title_listening">正在听</string>
+    <string name="voice_title_transcribing">正在完成转写</string>
+    <string name="voice_title_transcript_ready">确认转写</string>
+    <string name="voice_title_parsing">正在整理</string>
+    <string name="voice_title_needs_clarification">还需补充信息</string>
+    <string name="voice_title_preview">日程预览已就绪</string>
+    <string name="voice_title_saving">正在创建</string>
+    <string name="voice_title_success">创建完成</string>
+    <string name="voice_title_partial_success">部分项目已创建</string>
+    <string name="voice_title_failure">这次没有完成</string>
+    <string name="voice_subtitle_idle">一句话可以拆成多个事件、提醒或待办</string>
+    <string name="voice_subtitle_listening">说完后点“完成录音”，转写不会自动创建日程</string>
+    <string name="voice_subtitle_transcribing">正在等待最终识别结果</string>
+    <string name="voice_subtitle_transcript_ready">可以先修改文字，确认后再整理日程</string>
+    <string name="voice_subtitle_parsing">正在识别时间、类型和提醒方式</string>
+    <string name="voice_subtitle_needs_clarification">请在预览中补齐标出的关键信息</string>
+    <string name="voice_subtitle_preview">请逐项检查，确认无误后再创建</string>
+    <string name="voice_subtitle_saving">正在保存并安排提醒</string>
+    <string name="voice_subtitle_success">所有项目都已创建</string>
+    <string name="voice_subtitle_partial_success">请检查未创建项目的错误信息</string>
+    <string name="voice_subtitle_failure">可以修改文字后重试，或重新录音</string>
+    <string name="voice_action_start_speaking">开始说话</string>
+    <string name="voice_action_organize">整理日程</string>
+    <string name="voice_action_finish_recording">完成录音</string>
+    <string name="voice_action_transcribing">正在完成转写…</string>
+    <string name="voice_action_understanding">正在理解…</string>
+    <string name="voice_action_back_to_preview">返回预览</string>
+    <string name="voice_action_view_preview">查看预览</string>
+    <string name="voice_action_creating">正在创建…</string>
+    <string name="voice_action_done">完成</string>
+    <string name="voice_action_view_result">查看结果</string>
+    <string name="voice_action_speak_again">重新说</string>
+    <string name="voice_action_retry_organizing">重试整理</string>
+    <string name="voice_disabled_transcribing">请稍候，转写完成后才能继续。</string>
+    <string name="voice_disabled_parsing">正在整理日程，暂时不能重复提交。</string>
+    <string name="voice_disabled_saving">正在创建项目，请勿重复操作。</string>
+    <string name="voice_disabled_empty_transcript">请先输入或录制一段内容。</string>
+    <string name="voice_transcript_live_label">实时转写</string>
+    <string name="voice_transcript_label">转写内容</string>
+    <string name="voice_text_input_label">文字输入</string>
+    <string name="voice_text_input_placeholder">明天11点打开电脑，12点打开手机</string>
+    <string name="voice_stop_recording_description">停止录音</string>
+    <string name="voice_continue_description">继续语音</string>
+    <string name="voice_switch_to_text_description">切换到文字输入</string>
+    <string name="voice_listening_label">正在听</string>
+
+    <!-- Recognition history -->
+    <string name="history_title">识别历史</string>
+    <string name="history_subtitle">原始转写和解析结果只保存在本机</string>
+    <string name="history_close_description">关闭识别历史</string>
+    <string name="history_empty">还没有识别记录。完成一次 AI 整理后，可以在这里编辑原文或重新解析。</string>
+    <string name="history_unnamed_item">未命名项目</string>
+    <string name="history_failure_reason">上次失败原因：%1$s</string>
+    <string name="history_edit_transcript">编辑原文</string>
+    <string name="history_reparse">重新解析</string>
+    <string name="history_collapse_result">收起结果</string>
+    <string name="history_expand_result">查看上次结果</string>
+    <string name="history_delete_description">删除这条识别历史</string>
+    <string name="history_clear_confirmation">确定清空全部识别历史？此操作无法撤销。</string>
+    <string name="history_clear_all">清空识别历史</string>
+    <string name="history_status_undone">已撤销</string>
+    <string name="history_status_not_attempted">尚未创建</string>
+    <string name="history_status_success">创建成功</string>
+    <string name="history_status_failure">创建失败</string>
+    <string name="history_status_partial_success">部分成功</string>
+    <string name="history_date_pattern">M月d日 HH:mm</string>
+    <string name="history_no_draft">无草稿</string>
+    <string name="history_meta_format">%1$s · %2$s</string>
+    <string name="history_item_time_suffix"> · %1$s</string>
+    <string name="history_item_summary">%1$s · %2$s%3$s</string>
+    <string name="schedule_type_event">事件</string>
+    <string name="schedule_type_reminder">提醒</string>
+    <string name="schedule_type_todo">待办</string>
+    <plurals name="history_item_count">
+        <item quantity="other">%1$d 项</item>
+    </plurals>
+
+    <!-- Creation results and risk confirmation -->
+    <string name="creation_result_incomplete">创建未完成</string>
+    <string name="creation_result_description">结果已逐项记录；失败项仍保留在预览中。</string>
+    <string name="creation_result_close_description">关闭创建结果</string>
+    <string name="creation_result_retry_failed">重试失败项</string>
+    <string name="creation_result_undo">撤销</string>
+    <string name="creation_result_view_schedule">查看日程</string>
+    <string name="creation_result_back_to_preview">返回预览</string>
+    <string name="creation_outcome_failed">创建失败</string>
+    <string name="draft_preview_subtitle">逐项核对类型、时间和提醒，确认后再创建</string>
+    <string name="draft_preview_blocking_issues">创建前还需补充或确认：%1$s</string>
+    <string name="draft_preview_notification_permission">保存时会请求通知权限，用来准时提醒。</string>
+    <string name="draft_resolve_ambiguity">我已核对标注信息</string>
+    <string name="draft_risk_title">时间风险</string>
+    <string name="draft_risk_accepted">已确认仍然创建</string>
+    <string name="draft_risk_accept">仍然创建</string>
+    <string name="draft_return_continue">继续确认</string>
+    <string name="draft_return_unnamed">未命名</string>
+    <plurals name="creation_result_success">
+        <item quantity="other">已创建 %1$d 项安排</item>
+    </plurals>
+    <plurals name="creation_result_with_failures">
+        <item quantity="other">已创建 %1$d 项，%2$d 项失败</item>
+    </plurals>
+    <plurals name="creation_result_with_warnings">
+        <item quantity="other">已创建 %1$d 项，部分提醒需处理</item>
+    </plurals>
+    <plurals name="creation_outcome_created">
+        <item quantity="other">已创建 %1$d 项</item>
+    </plurals>
+    <plurals name="creation_outcome_created_with_warning">
+        <item quantity="other">已创建 %1$d 项，但提醒需要处理</item>
+    </plurals>
+    <plurals name="draft_prepared_count">
+        <item quantity="other">已整理出 %1$d 项安排</item>
+    </plurals>
+    <plurals name="draft_create_count">
+        <item quantity="other">创建 %1$d 项</item>
+    </plurals>
+    <plurals name="draft_pending_count">
+        <item quantity="other">待确认 %1$d 项</item>
+    </plurals>
+
+    <!-- Settings -->
+    <string name="settings_title">设置</string>
+    <string name="settings_section_ai_service">AI 服务</string>
+    <string name="settings_section_defaults">日程默认值</string>
+    <string name="settings_section_permissions">权限与提醒</string>
+    <string name="settings_section_data">数据管理</string>
+    <string name="settings_section_danger">危险操作</string>
+    <string name="settings_ai_service_name">DeepSeek</string>
+    <string name="settings_api_key_saved">API key 已使用 Android Keystore 加密保存在本机。</string>
+    <string name="settings_api_key_needed">输入自己的 API key 后即可整理日程。</string>
+    <string name="settings_api_key_label">DeepSeek API key</string>
+    <string name="settings_api_key_placeholder">已保存的密钥</string>
+    <string name="settings_api_key_hide_description">隐藏 API key</string>
+    <string name="settings_api_key_show_description">显示 API key</string>
+    <string name="settings_action_paste">粘贴</string>
+    <string name="settings_action_testing">正在测试…</string>
+    <string name="settings_action_test_connection">测试连接</string>
+    <string name="settings_action_clear_key">清除密钥</string>
+    <string name="settings_connection_status">连接状态：%1$s</string>
+    <string name="settings_ai_state_unverified">未验证</string>
+    <string name="settings_ai_state_checking">正在验证</string>
+    <string name="settings_ai_state_connected">已连接</string>
+    <string name="settings_ai_state_failed">连接失败</string>
+    <string name="settings_default_duration">默认时长</string>
+    <string name="settings_default_reminder">提前提醒</string>
+    <string name="settings_minutes">分钟</string>
+    <string name="settings_default_calendar">默认日历：应用内本地日历</string>
+    <string name="settings_default_timezone">默认时区：自动 · %1$s</string>
+    <string name="settings_permission_microphone">麦克风</string>
+    <string name="settings_permission_notifications">通知</string>
+    <string name="settings_permission_exact_alarm">准点提醒</string>
+    <string name="settings_action_notification_settings">通知设置</string>
+    <string name="settings_action_reminder_settings">提醒设置</string>
+    <string name="settings_calendar_write">日历写入</string>
+    <string name="settings_calendar_write_description">应用内本地日历，无需系统日历权限</string>
+    <string name="settings_available">可用</string>
+    <string name="settings_action_refresh_status">刷新状态</string>
+    <string name="settings_permission_ready">已开启</string>
+    <string name="settings_permission_needs_action">待开启</string>
+    <string name="settings_permission_unavailable">不可用</string>
+    <string name="settings_backup_title">备份数据</string>
+    <string name="settings_backup_description">将日程、设置和识别历史导出到文件</string>
+    <string name="settings_import_title">导入备份</string>
+    <string name="settings_import_description">从声历备份文件恢复本地数据</string>
+    <string name="settings_export_ics_title">导出 ICS</string>
+    <string name="settings_export_ics_description">导出为通用日历文件</string>
+    <string name="settings_privacy_title">隐私与数据说明</string>
+    <string name="settings_privacy_description">查看数据保存位置和联网范围</string>
+    <string name="settings_reset_title">清空本地数据？</string>
+    <string name="settings_reset_description">会删除日程、设置、解析历史和本机 API key。备份文件不会受影响。</string>
+    <string name="settings_reset_confirm">确认清空</string>
+    <string name="settings_reset_action">清空本地数据</string>
 </resources>

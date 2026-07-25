@@ -1,6 +1,7 @@
 package com.voicememos.aicalendar.ui
 
 import android.Manifest
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.KeyboardVoice
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Notifications
@@ -50,6 +53,8 @@ import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Today
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -73,6 +78,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,21 +89,33 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.voicememos.aicalendar.R
 import com.voicememos.aicalendar.data.exportEventsIcs
 import com.voicememos.aicalendar.data.exportEventsJson
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.ParseHistoryCreationStatus
 import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
 import com.voicememos.aicalendar.domain.ScheduleItemPriority
 import com.voicememos.aicalendar.domain.ScheduleItemType
 import com.voicememos.aicalendar.speech.SpeechInputController
+import com.voicememos.aicalendar.ui.session.CreationBatchSummary
+import com.voicememos.aicalendar.ui.session.CreationItemStatus
 import com.voicememos.aicalendar.ui.session.VoiceTaskState
 import com.voicememos.aicalendar.ui.theme.ShengliTheme
 import kotlinx.coroutines.delay
@@ -107,6 +126,26 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private sealed interface PendingDraftSave {
+    data object All : PendingDraftSave
+    data class One(val draftId: String) : PendingDraftSave
+}
+
+private fun PendingDraftSave.toSavedValue(): String =
+    when (this) {
+        PendingDraftSave.All -> "all"
+        is PendingDraftSave.One -> "one:$draftId"
+    }
+
+private fun String.toPendingDraftSave(): PendingDraftSave? =
+    when {
+        this == "all" -> PendingDraftSave.All
+        startsWith("one:") -> removePrefix("one:")
+            .takeIf(String::isNotBlank)
+            ?.let(PendingDraftSave::One)
+        else -> null
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,6 +163,16 @@ private fun CalendarWorkbench(
     state: CalendarUiState,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshPermissionStatus()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val speechController = remember {
         SpeechInputController(
             context = context,
@@ -145,14 +194,28 @@ private fun CalendarWorkbench(
         }
     }
 
+    val microphonePermissionRequiredMessage = stringResource(R.string.voice_permission_required)
     val recordAudioLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) speechController.start() else viewModel.showError("需要麦克风权限才能语音输入。")
+        if (granted) {
+            speechController.start()
+        } else {
+            viewModel.showError(microphonePermissionRequiredMessage)
+        }
     }
+    var pendingDraftSaveValue by rememberSaveable { mutableStateOf<String?>(null) }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { viewModel.refreshPermissionStatus() }
+    ) {
+        viewModel.refreshPermissionStatus()
+        when (val pending = pendingDraftSaveValue?.toPendingDraftSave()) {
+            PendingDraftSave.All -> viewModel.confirmAllDrafts()
+            is PendingDraftSave.One -> viewModel.confirmDraft(pending.draftId)
+            null -> Unit
+        }
+        pendingDraftSaveValue = null
+    }
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -174,6 +237,27 @@ private fun CalendarWorkbench(
     val dismissInputCurtain = {
         if (state.isListening) speechController.stop()
         viewModel.closeInputCurtain()
+    }
+    val switchToTextInput = {
+        speechController.cancel()
+        viewModel.switchToTextInput()
+    }
+    val requestDraftSave: (PendingDraftSave) -> Unit = { pending ->
+        val needsNotificationPermission =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (needsNotificationPermission) {
+            pendingDraftSaveValue = pending.toSavedValue()
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            when (pending) {
+                PendingDraftSave.All -> viewModel.confirmAllDrafts()
+                is PendingDraftSave.One -> viewModel.confirmDraft(pending.draftId)
+            }
+        }
     }
 
     Scaffold(
@@ -202,6 +286,7 @@ private fun CalendarWorkbench(
                             if (state.themeMode == AppThemeMode.DARK) AppThemeMode.LIGHT else AppThemeMode.DARK,
                         )
                     },
+                    onHistory = viewModel::openHistory,
                     onSettings = viewModel::openSettings,
                 )
                 ViewModeSelector(
@@ -222,13 +307,22 @@ private fun CalendarWorkbench(
                 WarningsAndErrors(state)
                 DraftReturnBar(
                     drafts = state.draftEditors,
-                    visible = state.draftEditors.isNotEmpty() && !state.showDraftSheet,
+                    visible = state.draftEditors.isNotEmpty() &&
+                        !state.showDraftSheet &&
+                        state.voiceTaskState !in setOf(
+                            VoiceTaskState.Parsing,
+                            VoiceTaskState.Saving,
+                        ),
                     onOpen = viewModel::showDraftSheet,
                 )
             }
             VoiceInputFab(
                 isListening = state.isListening,
-                isParsing = state.isParsing,
+                isBusy = state.voiceTaskState in setOf(
+                    VoiceTaskState.Transcribing,
+                    VoiceTaskState.Parsing,
+                    VoiceTaskState.Saving,
+                ),
                 onClick = toggleVoiceInput,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -248,6 +342,8 @@ private fun CalendarWorkbench(
                 onTextChanged = viewModel::updateTextInput,
                 onSubmit = viewModel::parseCurrentText,
                 onVoiceInput = toggleVoiceInput,
+                onTextInput = switchToTextInput,
+                onOpenSettings = viewModel::openSettings,
                 onDismiss = dismissInputCurtain,
             )
         }
@@ -280,9 +376,26 @@ private fun CalendarWorkbench(
                 onOpenNotificationSettings = viewModel::openNotificationSettings,
                 onOpenExactAlarmSettings = viewModel::openExactAlarmSettings,
                 onRefreshPermissions = viewModel::refreshPermissionStatus,
+                onTestConnection = viewModel::testAiConnection,
                 onSave = viewModel::saveApiKey,
                 onClearApiKey = viewModel::clearApiKey,
                 onClose = viewModel::closeSettings,
+            )
+        }
+    }
+
+    if (state.showHistory) {
+        ModalBottomSheet(
+            onDismissRequest = viewModel::closeHistory,
+            shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+        ) {
+            RecognitionHistorySheet(
+                history = state.parseHistory,
+                onEditTranscript = viewModel::reuseTranscript,
+                onReparse = viewModel::regenerateTranscript,
+                onDelete = viewModel::deleteParseHistory,
+                onClear = viewModel::clearParseHistory,
+                onClose = viewModel::closeHistory,
             )
         }
     }
@@ -320,23 +433,36 @@ private fun CalendarWorkbench(
             DraftPanel(
                 state = state,
                 onUpdate = viewModel::updateDraft,
-                onConfirmAll = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                    viewModel.confirmAllDrafts()
-                },
-                onConfirm = { draftId ->
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                    viewModel.confirmDraft(draftId)
-                },
+                onConfirmAll = { requestDraftSave(PendingDraftSave.All) },
+                onConfirm = { draftId -> requestDraftSave(PendingDraftSave.One(draftId)) },
+                onAcceptRisk = viewModel::acceptDraftRisks,
                 onDiscard = viewModel::discardDraft,
                 onClear = viewModel::clearDrafts,
             )
         }
     }
+
+    state.creationSummary
+        ?.takeIf { state.showCreationResult }
+        ?.let { summary ->
+            ModalBottomSheet(
+                onDismissRequest = viewModel::dismissCreationResult,
+                shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp),
+            ) {
+                CreationResultSheet(
+                    summary = summary,
+                    onViewSchedule = if (summary.createdCount > 0) {
+                        viewModel::dismissCreationResult
+                    } else {
+                        viewModel::retryFailedCreation
+                    },
+                    onRetryFailed = viewModel::retryFailedCreation,
+                    onUndo = viewModel::undoLastCreation,
+                    onOpenSettings = viewModel::openSettingsFromCreationResult,
+                    onClose = viewModel::dismissCreationResult,
+                )
+            }
+        }
 
     state.eventEditor?.let { editor ->
         ModalBottomSheet(
@@ -495,6 +621,7 @@ private fun Header(
     apiKeySaved: Boolean,
     onToday: () -> Unit,
     onThemeToggle: () -> Unit,
+    onHistory: () -> Unit,
     onSettings: () -> Unit,
 ) {
     Row(
@@ -536,11 +663,23 @@ private fun Header(
                 )
             }
             IconButton(
+                onClick = onHistory,
+                modifier = Modifier.testTag("history-button"),
+            ) {
+                Icon(
+                    Icons.Rounded.History,
+                    contentDescription = stringResource(R.string.history_title),
+                )
+            }
+            IconButton(
                 onClick = onSettings,
                 modifier = Modifier.testTag("settings-button"),
             ) {
                 Box {
-                    Icon(Icons.Rounded.Settings, contentDescription = "设置")
+                    Icon(
+                        Icons.Rounded.Settings,
+                        contentDescription = stringResource(R.string.settings_title),
+                    )
                     if (!apiKeySaved) {
                         Box(
                             modifier = Modifier
@@ -561,12 +700,17 @@ private fun ViewModeSelector(
     selected: CalendarViewMode,
     onSelect: (CalendarViewMode) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         CalendarViewMode.entries.forEach { mode ->
             FilterChip(
                 selected = selected == mode,
                 onClick = { onSelect(mode) },
-                modifier = Modifier.testTag("view-mode-${mode.name.lowercase()}"),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("view-mode-${mode.name.lowercase()}"),
                 label = { Text(mode.label) },
             )
         }
@@ -652,7 +796,7 @@ private fun MonthGrid(
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(7),
-        modifier = Modifier.height(250.dp),
+        modifier = Modifier.height(370.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -675,7 +819,7 @@ private fun MonthGrid(
         }
         items(days) { date ->
             if (date == null) {
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(48.dp))
             } else {
                 DayCell(
                     date = date,
@@ -698,13 +842,13 @@ private fun DayCell(
     val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
-            .height(32.dp)
+            .height(48.dp)
             .testTag("day-${date.dayOfMonth}")
             .clip(shape)
             .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
             .border(
                 1.dp,
-                if (date == LocalDate.now()) MaterialTheme.colorScheme.tertiary else Color.Transparent,
+                if (date == LocalDate.now()) MaterialTheme.colorScheme.primary else Color.Transparent,
                 shape,
             )
             .clickable(onClick = onClick),
@@ -921,11 +1065,26 @@ private fun EventList(
             .sortedBy { it.startAt }
     }
     if (visible.isEmpty()) {
-        Box(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
-            contentAlignment = Alignment.Center,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("今天还很清爽", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (selectedDate == LocalDate.now(zone)) {
+                    "今天 · ${selectedDate.format(DateTimeFormatter.ofPattern("M月d日"))}"
+                } else {
+                    selectedDate.format(DateTimeFormatter.ofPattern("M月d日 E", Locale.SIMPLIFIED_CHINESE))
+                },
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text("暂无安排", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "试着说：\n“今晚八点提醒我跑步”\n“下周一上午十点开项目会”",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         return
     }
@@ -1144,11 +1303,20 @@ private fun EventRow(
                     if (event.status == EventStatus.DONE) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
-                        MaterialTheme.colorScheme.primary
+                        when (event.itemType) {
+                            ScheduleItemType.EVENT -> MaterialTheme.colorScheme.primary
+                            ScheduleItemType.REMINDER -> MaterialTheme.colorScheme.secondary
+                            ScheduleItemType.TODO -> MaterialTheme.colorScheme.tertiary
+                        }
                     },
                 ),
         )
         Column(modifier = Modifier.weight(1f)) {
+            Text(
+                event.itemType.displayName(),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelSmall,
+            )
             Text(
                 event.title,
                 style = MaterialTheme.typography.titleMedium,
@@ -1156,7 +1324,7 @@ private fun EventRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                event.startAt.atZone(zone).format(DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE)),
+                event.listTimeLabel(zone),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -1173,35 +1341,50 @@ private fun EventRow(
 @Composable
 private fun VoiceInputFab(
     isListening: Boolean,
-    isParsing: Boolean,
+    isBusy: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val containerColor = when {
         isListening -> MaterialTheme.colorScheme.secondary
-        isParsing -> MaterialTheme.colorScheme.tertiary
+        isBusy -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.primary
+    }
+    val contentColor = when {
+        isListening -> MaterialTheme.colorScheme.onSecondary
+        isBusy -> MaterialTheme.colorScheme.onTertiary
+        else -> MaterialTheme.colorScheme.onPrimary
     }
     Surface(
         modifier = modifier
-            .size(64.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
+            .width(112.dp)
+            .height(56.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .clickable(enabled = !isBusy, onClick = onClick)
             .testTag("voice-input-button"),
-        shape = CircleShape,
+        shape = RoundedCornerShape(28.dp),
         color = containerColor,
         tonalElevation = 6.dp,
         shadowElevation = 6.dp,
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(
                 Icons.Rounded.KeyboardVoice,
-                contentDescription = if (isListening) "停止录音" else "语音输入",
-                tint = if (isListening) {
-                    MaterialTheme.colorScheme.onSecondary
-                } else {
-                    MaterialTheme.colorScheme.onPrimary
+                contentDescription = null,
+                tint = contentColor,
+            )
+            Text(
+                when {
+                    isListening -> stringResource(R.string.voice_fab_finish)
+                    isBusy -> stringResource(R.string.voice_fab_organizing)
+                    else -> stringResource(R.string.voice_fab_schedule)
                 },
+                color = contentColor,
+                style = MaterialTheme.typography.labelLarge,
             )
         }
     }
@@ -1213,6 +1396,8 @@ private fun VoiceInputCurtain(
     onTextChanged: (String) -> Unit,
     onSubmit: () -> Unit,
     onVoiceInput: () -> Unit,
+    onTextInput: () -> Unit,
+    onOpenSettings: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val taskState = state.voiceTaskState
@@ -1234,32 +1419,36 @@ private fun VoiceInputCurtain(
                 .coerceAtLeast(0)
         }
         ?: 0L
-    val title = when (taskState) {
-        VoiceTaskState.Idle -> "说出安排"
-        VoiceTaskState.Listening -> "正在听"
-        VoiceTaskState.Transcribing -> "正在完成转写"
-        VoiceTaskState.TranscriptReady -> "确认转写"
-        VoiceTaskState.Parsing -> "正在整理"
-        VoiceTaskState.NeedsClarification -> "还需补充信息"
-        VoiceTaskState.Preview -> "日程预览已就绪"
-        VoiceTaskState.Saving -> "正在创建"
-        VoiceTaskState.Success -> "创建完成"
-        VoiceTaskState.PartialSuccess -> "部分项目已创建"
-        VoiceTaskState.Failure -> "这次没有完成"
-    }
-    val subtitle = when (taskState) {
-        VoiceTaskState.Idle -> "一句话可以拆成多个事件、提醒或待办"
-        VoiceTaskState.Listening -> "说完后点“完成录音”，转写不会自动创建日程"
-        VoiceTaskState.Transcribing -> "正在等待最终识别结果"
-        VoiceTaskState.TranscriptReady -> "可以先修改文字，确认后再整理日程"
-        VoiceTaskState.Parsing -> "正在识别时间、类型和提醒方式"
-        VoiceTaskState.NeedsClarification -> "请在预览中补齐标出的关键信息"
-        VoiceTaskState.Preview -> "请逐项检查，确认无误后再创建"
-        VoiceTaskState.Saving -> "正在保存并安排提醒"
-        VoiceTaskState.Success -> "所有项目都已创建"
-        VoiceTaskState.PartialSuccess -> "请检查未创建项目的错误信息"
-        VoiceTaskState.Failure -> "可以修改文字后重试，或重新录音"
-    }
+    val title = stringResource(
+        when (taskState) {
+            VoiceTaskState.Idle -> R.string.voice_title_idle
+            VoiceTaskState.Listening -> R.string.voice_title_listening
+            VoiceTaskState.Transcribing -> R.string.voice_title_transcribing
+            VoiceTaskState.TranscriptReady -> R.string.voice_title_transcript_ready
+            VoiceTaskState.Parsing -> R.string.voice_title_parsing
+            VoiceTaskState.NeedsClarification -> R.string.voice_title_needs_clarification
+            VoiceTaskState.Preview -> R.string.voice_title_preview
+            VoiceTaskState.Saving -> R.string.voice_title_saving
+            VoiceTaskState.Success -> R.string.voice_title_success
+            VoiceTaskState.PartialSuccess -> R.string.voice_title_partial_success
+            VoiceTaskState.Failure -> R.string.voice_title_failure
+        },
+    )
+    val subtitle = stringResource(
+        when (taskState) {
+            VoiceTaskState.Idle -> R.string.voice_subtitle_idle
+            VoiceTaskState.Listening -> R.string.voice_subtitle_listening
+            VoiceTaskState.Transcribing -> R.string.voice_subtitle_transcribing
+            VoiceTaskState.TranscriptReady -> R.string.voice_subtitle_transcript_ready
+            VoiceTaskState.Parsing -> R.string.voice_subtitle_parsing
+            VoiceTaskState.NeedsClarification -> R.string.voice_subtitle_needs_clarification
+            VoiceTaskState.Preview -> R.string.voice_subtitle_preview
+            VoiceTaskState.Saving -> R.string.voice_subtitle_saving
+            VoiceTaskState.Success -> R.string.voice_subtitle_success
+            VoiceTaskState.PartialSuccess -> R.string.voice_subtitle_partial_success
+            VoiceTaskState.Failure -> R.string.voice_subtitle_failure
+        },
+    )
     val isBusy = taskState in setOf(
         VoiceTaskState.Transcribing,
         VoiceTaskState.Parsing,
@@ -1271,17 +1460,29 @@ private fun VoiceInputCurtain(
         VoiceTaskState.Failure,
     )
     val primaryLabel = when (taskState) {
-        VoiceTaskState.Idle -> if (transcript.isBlank()) "开始说话" else "整理日程"
-        VoiceTaskState.Listening -> "完成录音"
-        VoiceTaskState.Transcribing -> "正在完成转写…"
-        VoiceTaskState.TranscriptReady -> "整理日程"
-        VoiceTaskState.Parsing -> "正在理解…"
-        VoiceTaskState.NeedsClarification -> "返回预览"
-        VoiceTaskState.Preview -> "查看预览"
-        VoiceTaskState.Saving -> "正在创建…"
-        VoiceTaskState.Success -> "完成"
-        VoiceTaskState.PartialSuccess -> "查看结果"
-        VoiceTaskState.Failure -> if (transcript.isBlank()) "重新说" else "重试整理"
+        VoiceTaskState.Idle -> stringResource(
+            if (transcript.isBlank()) {
+                R.string.voice_action_start_speaking
+            } else {
+                R.string.voice_action_organize
+            },
+        )
+        VoiceTaskState.Listening -> stringResource(R.string.voice_action_finish_recording)
+        VoiceTaskState.Transcribing -> stringResource(R.string.voice_action_transcribing)
+        VoiceTaskState.TranscriptReady -> stringResource(R.string.voice_action_organize)
+        VoiceTaskState.Parsing -> stringResource(R.string.voice_action_understanding)
+        VoiceTaskState.NeedsClarification -> stringResource(R.string.voice_action_back_to_preview)
+        VoiceTaskState.Preview -> stringResource(R.string.voice_action_view_preview)
+        VoiceTaskState.Saving -> stringResource(R.string.voice_action_creating)
+        VoiceTaskState.Success -> stringResource(R.string.voice_action_done)
+        VoiceTaskState.PartialSuccess -> stringResource(R.string.voice_action_view_result)
+        VoiceTaskState.Failure -> stringResource(
+            if (transcript.isBlank()) {
+                R.string.voice_action_speak_again
+            } else {
+                R.string.voice_action_retry_organizing
+            },
+        )
     }
     val primaryEnabled = when (taskState) {
         VoiceTaskState.Transcribing,
@@ -1292,11 +1493,14 @@ private fun VoiceInputCurtain(
         else -> true
     }
     val disabledReason = when {
-        taskState == VoiceTaskState.Transcribing -> "请稍候，转写完成后才能继续。"
-        taskState == VoiceTaskState.Parsing -> "正在整理日程，暂时不能重复提交。"
-        taskState == VoiceTaskState.Saving -> "正在创建项目，请勿重复操作。"
+        taskState == VoiceTaskState.Transcribing ->
+            stringResource(R.string.voice_disabled_transcribing)
+        taskState == VoiceTaskState.Parsing ->
+            stringResource(R.string.voice_disabled_parsing)
+        taskState == VoiceTaskState.Saving ->
+            stringResource(R.string.voice_disabled_saving)
         taskState == VoiceTaskState.TranscriptReady && transcript.isBlank() ->
-            "请先输入或录制一段内容。"
+            stringResource(R.string.voice_disabled_empty_transcript)
         else -> null
     }
     Column(
@@ -1330,7 +1534,10 @@ private fun VoiceInputCurtain(
                 onClick = onDismiss,
                 modifier = Modifier.testTag("voice-input-curtain-close-button"),
             ) {
-                Icon(Icons.Rounded.Close, contentDescription = "关闭")
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.common_close),
+                )
             }
         }
 
@@ -1374,13 +1581,15 @@ private fun VoiceInputCurtain(
                 label = {
                     Text(
                         when (taskState) {
-                            VoiceTaskState.Listening -> "实时转写"
-                            VoiceTaskState.Transcribing -> "转写内容"
-                            else -> "文字输入"
+                            VoiceTaskState.Listening ->
+                                stringResource(R.string.voice_transcript_live_label)
+                            VoiceTaskState.Transcribing ->
+                                stringResource(R.string.voice_transcript_label)
+                            else -> stringResource(R.string.voice_text_input_label)
                         },
                     )
                 },
-                placeholder = { Text("明天11点打开电脑，12点打开手机") },
+                placeholder = { Text(stringResource(R.string.voice_text_input_placeholder)) },
                 minLines = 3,
                 maxLines = 6,
                 readOnly = !transcriptEditable,
@@ -1397,6 +1606,18 @@ private fun VoiceInputCurtain(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            FilledIconButton(
+                onClick = onTextInput,
+                enabled = !isBusy,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("curtain-text-input-button"),
+            ) {
+                Icon(
+                    Icons.Rounded.Edit,
+                    contentDescription = stringResource(R.string.voice_switch_to_text_description),
+                )
+            }
             FilledIconButton(
                 onClick = onVoiceInput,
                 enabled = !isBusy,
@@ -1418,7 +1639,13 @@ private fun VoiceInputCurtain(
             ) {
                 Icon(
                     Icons.Rounded.KeyboardVoice,
-                    contentDescription = if (state.isListening) "停止录音" else "继续语音",
+                    contentDescription = stringResource(
+                        if (state.isListening) {
+                            R.string.voice_stop_recording_description
+                        } else {
+                            R.string.voice_continue_description
+                        },
+                    ),
                 )
             }
             Button(
@@ -1463,6 +1690,14 @@ private fun VoiceInputCurtain(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (state.workflowError?.shouldOpenSettings == true) {
+            TextButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.testTag("voice-error-open-settings-button"),
+            ) {
+                Text(stringResource(R.string.common_open_settings))
+            }
+        }
     }
 }
 
@@ -1491,7 +1726,7 @@ private fun ListeningWaveform(elapsedSeconds: Long) {
         }
         Spacer(Modifier.width(4.dp))
         Text(
-            "正在听",
+            stringResource(R.string.voice_listening_label),
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             style = MaterialTheme.typography.labelLarge,
         )
@@ -1538,84 +1773,192 @@ private fun SheetMessages(
 }
 
 @Composable
-private fun ComposerBar(
-    state: CalendarUiState,
-    onTextChanged: (String) -> Unit,
-    onReuseTranscript: (String) -> Unit,
-    onRegenerateTranscript: (String) -> Unit,
-    onClearHistory: () -> Unit,
-    onSubmit: () -> Unit,
-    onVoiceInput: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun RecognitionHistorySheet(
+    history: List<ParseHistoryItem>,
+    onEditTranscript: (String) -> Unit,
+    onReparse: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onClear: () -> Unit,
+    onClose: () -> Unit,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
+    var expandedHistoryId by remember { mutableStateOf<String?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
+    val unnamedItemLabel = stringResource(R.string.history_unnamed_item)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (state.isParsing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(
-                value = state.partialTranscript.ifBlank { state.textInput },
-                onValueChange = onTextChanged,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 92.dp, max = 132.dp)
-                    .testTag("transcript-field"),
-                shape = RoundedCornerShape(8.dp),
-                label = { Text(if (state.isListening) "正在听" else "一句话") },
-                placeholder = { Text("明天11点打开电脑，12点打开手机") },
-                minLines = 2,
-                maxLines = 4,
-            )
-            if (state.parseHistory.isNotEmpty() &&
-                state.textInput.isBlank() &&
-                state.partialTranscript.isBlank()
-            ) {
-                ParseHistoryStrip(
-                    history = state.parseHistory,
-                    onReuseTranscript = onReuseTranscript,
-                    onRegenerateTranscript = onRegenerateTranscript,
-                    onClearHistory = onClearHistory,
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.history_title),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    stringResource(R.string.history_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Row(
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.history_close_description),
+                )
+            }
+        }
+        if (history.isEmpty()) {
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
             ) {
-                FilledIconButton(
-                    onClick = onVoiceInput,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("voice-input-button"),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = if (state.isListening) {
-                            MaterialTheme.colorScheme.secondary
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        contentColor = if (state.isListening) {
-                            MaterialTheme.colorScheme.onSecondary
-                        } else {
-                            MaterialTheme.colorScheme.onPrimary
-                        },
-                    ),
-                ) {
-                    Icon(Icons.Rounded.KeyboardVoice, contentDescription = "语音输入")
+                Text(
+                    stringResource(R.string.history_empty),
+                    modifier = Modifier.padding(16.dp),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(history, key = { it.id }) { item ->
+                    val expanded = expandedHistoryId == item.id
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("parse-history-row"),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 1.dp,
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                item.transcript,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = if (expanded) Int.MAX_VALUE else 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "${item.metaLabel()} · ${item.creationStatus.displayName(item.isUndone)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (expanded) {
+                                item.itemSummaries.forEach { scheduleItem ->
+                                    val itemTitle = scheduleItem.title.ifBlank {
+                                        unnamedItemLabel
+                                    }
+                                    val timeSuffix = if (scheduleItem.timeSummary == null) {
+                                        ""
+                                    } else {
+                                        stringResource(
+                                            R.string.history_item_time_suffix,
+                                            scheduleItem.timeSummary,
+                                        )
+                                    }
+                                    Text(
+                                        stringResource(
+                                            R.string.history_item_summary,
+                                            scheduleItem.itemType.historyDisplayName(),
+                                            itemTitle,
+                                            timeSuffix,
+                                        ),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                                item.failureReason?.let { reason ->
+                                    Text(
+                                        stringResource(R.string.history_failure_reason, reason),
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                TextButton(onClick = { onEditTranscript(item.transcript) }) {
+                                    Text(stringResource(R.string.history_edit_transcript))
+                                }
+                                TextButton(onClick = { onReparse(item.transcript) }) {
+                                    Text(stringResource(R.string.history_reparse))
+                                }
+                                TextButton(
+                                    onClick = {
+                                        expandedHistoryId = if (expanded) null else item.id
+                                    },
+                                ) {
+                                    Text(
+                                        stringResource(
+                                            if (expanded) {
+                                                R.string.history_collapse_result
+                                            } else {
+                                                R.string.history_expand_result
+                                            },
+                                        ),
+                                    )
+                                }
+                                IconButton(onClick = { onDelete(item.id) }) {
+                                    Icon(
+                                        Icons.Rounded.Delete,
+                                        contentDescription = stringResource(
+                                            R.string.history_delete_description,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-                FilledIconButton(
-                    onClick = onSubmit,
-                    enabled = !state.isParsing && state.partialTranscript.ifBlank { state.textInput }.isNotBlank(),
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("generate-button"),
+            }
+            if (confirmClear) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
                 ) {
-                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "生成")
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.history_clear_confirmation),
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        TextButton(onClick = { confirmClear = false }) {
+                            Text(stringResource(R.string.common_cancel))
+                        }
+                        TextButton(
+                            onClick = {
+                                onClear()
+                                confirmClear = false
+                            },
+                        ) {
+                            Text(stringResource(R.string.common_clear))
+                        }
+                    }
+                }
+            } else {
+                TextButton(onClick = { confirmClear = true }) {
+                    Text(stringResource(R.string.history_clear_all))
                 }
             }
         }
@@ -1623,91 +1966,45 @@ private fun ComposerBar(
 }
 
 @Composable
-private fun ParseHistoryStrip(
-    history: List<ParseHistoryItem>,
-    onReuseTranscript: (String) -> Unit,
-    onRegenerateTranscript: (String) -> Unit,
-    onClearHistory: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "复核历史",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(
-                onClick = onClearHistory,
-                modifier = Modifier.testTag("parse-history-clear-button"),
-            ) {
-                Text("清空")
-            }
-        }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(history, key = { it.id }) { item ->
-                Column(
-                    modifier = Modifier
-                        .width(248.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.background)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                        .padding(10.dp)
-                        .testTag("parse-history-row"),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        item.transcript,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        item.summary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        item.metaLabel(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        TextButton(
-                            onClick = { onReuseTranscript(item.transcript) },
-                            modifier = Modifier.testTag("parse-history-reuse-button"),
-                        ) {
-                            Text("填入")
-                        }
-                        TextButton(
-                            onClick = { onRegenerateTranscript(item.transcript) },
-                            modifier = Modifier.testTag("parse-history-regenerate-button"),
-                        ) {
-                            Text("重生成")
-                        }
-                    }
-                }
-            }
-        }
-    }
+private fun ParseHistoryCreationStatus.displayName(isUndone: Boolean): String {
+    if (isUndone) return stringResource(R.string.history_status_undone)
+    return stringResource(
+        when (this) {
+            ParseHistoryCreationStatus.NOT_ATTEMPTED -> R.string.history_status_not_attempted
+            ParseHistoryCreationStatus.SUCCESS -> R.string.history_status_success
+            ParseHistoryCreationStatus.FAILURE -> R.string.history_status_failure
+            ParseHistoryCreationStatus.PARTIAL_SUCCESS -> R.string.history_status_partial_success
+        },
+    )
 }
 
+@Composable
 private fun ParseHistoryItem.metaLabel(): String {
     val time = java.time.Instant.ofEpochMilli(createdAtEpochMillis)
         .atZone(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE))
-    val count = if (draftCount > 0) "$draftCount 项" else "无草稿"
-    return "$time · $count"
+        .format(
+            DateTimeFormatter.ofPattern(
+                stringResource(R.string.history_date_pattern),
+                Locale.SIMPLIFIED_CHINESE,
+            ),
+        )
+    val count = if (draftCount > 0) {
+        pluralStringResource(R.plurals.history_item_count, draftCount, draftCount)
+    } else {
+        stringResource(R.string.history_no_draft)
+    }
+    return stringResource(R.string.history_meta_format, time, count)
 }
+
+@Composable
+private fun ScheduleItemType.historyDisplayName(): String =
+    stringResource(
+        when (this) {
+            ScheduleItemType.EVENT -> R.string.schedule_type_event
+            ScheduleItemType.REMINDER -> R.string.schedule_type_reminder
+            ScheduleItemType.TODO -> R.string.schedule_type_todo
+        },
+    )
 
 @Composable
 private fun WarningsAndErrors(state: CalendarUiState) {
@@ -1729,6 +2026,7 @@ private fun DraftReturnBar(
     visible: Boolean,
     onOpen: () -> Unit,
 ) {
+    val unnamedDraftLabel = stringResource(R.string.draft_return_unnamed)
     AnimatedVisibility(visible) {
         Surface(
             modifier = Modifier
@@ -1745,16 +2043,211 @@ private fun DraftReturnBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("待确认 ${drafts.size} 项", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        drafts.joinToString("  ") { it.title.ifBlank { "未命名" } },
+                        pluralStringResource(
+                            R.plurals.draft_pending_count,
+                            drafts.size,
+                            drafts.size,
+                        ),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        drafts.joinToString("  ") {
+                            it.title.ifBlank {
+                                unnamedDraftLabel
+                            }
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                TextButton(onClick = onOpen) { Text("继续确认") }
+                TextButton(onClick = onOpen) {
+                    Text(stringResource(R.string.draft_return_continue))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreationResultSheet(
+    summary: CreationBatchSummary,
+    onViewSchedule: () -> Unit,
+    onRetryFailed: () -> Unit,
+    onUndo: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val unnamedItemLabel = stringResource(R.string.history_unnamed_item)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                val resultTitle = when {
+                    summary.createdCount == 0 -> stringResource(R.string.creation_result_incomplete)
+                    summary.hasFailures -> pluralStringResource(
+                        R.plurals.creation_result_with_failures,
+                        summary.createdCount,
+                        summary.createdCount,
+                        summary.failedCount,
+                    )
+                    summary.hasWarnings -> pluralStringResource(
+                        R.plurals.creation_result_with_warnings,
+                        summary.createdCount,
+                        summary.createdCount,
+                    )
+                    else -> pluralStringResource(
+                        R.plurals.creation_result_success,
+                        summary.createdCount,
+                        summary.createdCount,
+                    )
+                }
+                Text(
+                    resultTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    stringResource(R.string.creation_result_description),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.creation_result_close_description),
+                )
+            }
+        }
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 360.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(summary.outcomes, key = { it.draftId }) { outcome ->
+                val isFailure = outcome.status == CreationItemStatus.FAILED
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isFailure) {
+                        MaterialTheme.colorScheme.errorContainer
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            if (isFailure) Icons.Rounded.Close else Icons.Rounded.Check,
+                            contentDescription = null,
+                            tint = if (isFailure) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            },
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                outcome.title.ifBlank {
+                                    unnamedItemLabel
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                when (outcome.status) {
+                                    CreationItemStatus.CREATED -> pluralStringResource(
+                                        R.plurals.creation_outcome_created,
+                                        outcome.createdCount,
+                                        outcome.createdCount,
+                                    )
+                                    CreationItemStatus.CREATED_WITH_WARNING -> pluralStringResource(
+                                        R.plurals.creation_outcome_created_with_warning,
+                                        outcome.createdCount,
+                                        outcome.createdCount,
+                                    )
+                                    CreationItemStatus.FAILED ->
+                                        stringResource(R.string.creation_outcome_failed)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            outcome.message?.let { message ->
+                                Text(
+                                    message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isFailure) {
+                                        MaterialTheme.colorScheme.onErrorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (summary.hasFailures) {
+                    TextButton(
+                        onClick = onRetryFailed,
+                        modifier = Modifier.testTag("creation-retry-failed-button"),
+                    ) {
+                        Text(stringResource(R.string.creation_result_retry_failed))
+                    }
+                }
+                if (summary.canUndo) {
+                    TextButton(
+                        onClick = onUndo,
+                        modifier = Modifier.testTag("creation-undo-button"),
+                    ) {
+                        Text(stringResource(R.string.creation_result_undo))
+                    }
+                }
+                if (summary.hasWarnings) {
+                    TextButton(onClick = onOpenSettings) {
+                        Text(stringResource(R.string.common_open_settings))
+                    }
+                }
+            }
+            Button(
+                onClick = onViewSchedule,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("creation-view-schedule-button"),
+            ) {
+                Text(
+                    stringResource(
+                        if (summary.createdCount > 0) {
+                            R.string.creation_result_view_schedule
+                        } else {
+                            R.string.creation_result_back_to_preview
+                        },
+                    ),
+                )
             }
         }
     }
@@ -1766,6 +2259,7 @@ private fun DraftPanel(
     onUpdate: (String, (DraftEditor) -> DraftEditor) -> Unit,
     onConfirmAll: () -> Unit,
     onConfirm: (String) -> Unit,
+    onAcceptRisk: (String) -> Unit,
     onDiscard: (String) -> Unit,
     onClear: () -> Unit,
 ) {
@@ -1775,7 +2269,7 @@ private fun DraftPanel(
         .flatMap { draft -> draft.blockingIssueLabels(zoneId) }
         .distinct()
     val canCreateAll = drafts.isNotEmpty() &&
-        drafts.all { draft -> draft.canCreate(zoneId) } &&
+        drafts.all { draft -> state.canCreateDraft(draft, zoneId) } &&
         !state.isSaving
     AnimatedVisibility(drafts.isNotEmpty()) {
         Surface(
@@ -1796,9 +2290,16 @@ private fun DraftPanel(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("已整理出 ${drafts.size} 项安排", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "逐项核对类型、时间和提醒，确认后再创建",
+                            pluralStringResource(
+                                R.plurals.draft_prepared_count,
+                                drafts.size,
+                                drafts.size,
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            stringResource(R.string.draft_preview_subtitle),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1806,7 +2307,9 @@ private fun DraftPanel(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onClear, enabled = !state.isSaving) { Text("清空") }
+                        TextButton(onClick = onClear, enabled = !state.isSaving) {
+                            Text(stringResource(R.string.common_clear))
+                        }
                         Spacer(Modifier.width(4.dp))
                         Button(
                             onClick = onConfirmAll,
@@ -1815,7 +2318,17 @@ private fun DraftPanel(
                         ) {
                             Icon(Icons.Rounded.Save, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text(if (state.isSaving) "正在创建…" else "创建 ${drafts.size} 项")
+                            Text(
+                                if (state.isSaving) {
+                                    stringResource(R.string.voice_action_creating)
+                                } else {
+                                    pluralStringResource(
+                                        R.plurals.draft_create_count,
+                                        drafts.size,
+                                        drafts.size,
+                                    )
+                                },
+                            )
                         }
                     }
                 }
@@ -1832,7 +2345,10 @@ private fun DraftPanel(
                         color = MaterialTheme.colorScheme.errorContainer,
                     ) {
                         Text(
-                            text = "创建前还需补充或确认：${blockingIssues.joinToString("、")}",
+                            text = stringResource(
+                                R.string.draft_preview_blocking_issues,
+                                blockingIssues.joinToString("、"),
+                            ),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             style = MaterialTheme.typography.bodyMedium,
@@ -1846,7 +2362,7 @@ private fun DraftPanel(
                 ) {
                     Icon(Icons.Rounded.Notifications, contentDescription = null)
                     Text(
-                        "保存时会请求通知权限，用来准时提醒。",
+                        stringResource(R.string.draft_preview_notification_permission),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -1862,9 +2378,12 @@ private fun DraftPanel(
                             draft = draft,
                             onUpdate = { transform -> onUpdate(draft.draftId, transform) },
                             onConfirm = { onConfirm(draft.draftId) },
+                            onAcceptRisk = { onAcceptRisk(draft.draftId) },
                             onDiscard = { onDiscard(draft.draftId) },
                             isSaving = state.isSaving,
                             zoneId = zoneId,
+                            riskMessages = state.draftRiskMessages[draft.draftId].orEmpty(),
+                            riskAccepted = draft.draftId in state.acceptedRiskDraftIds,
                         )
                     }
                 }
@@ -1878,12 +2397,17 @@ private fun DraftEditorCard(
     draft: DraftEditor,
     onUpdate: ((DraftEditor) -> DraftEditor) -> Unit,
     onConfirm: () -> Unit,
+    onAcceptRisk: () -> Unit,
     onDiscard: () -> Unit,
     isSaving: Boolean,
     zoneId: ZoneId,
+    riskMessages: List<String>,
+    riskAccepted: Boolean,
 ) {
     val issues = draft.blockingIssueLabels(zoneId)
-    val canCreate = draft.canCreate(zoneId) && !isSaving
+    val canCreate = draft.canCreate(zoneId) &&
+        (riskMessages.isEmpty() || riskAccepted) &&
+        !isSaving
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -2007,7 +2531,50 @@ private fun DraftEditorCard(
                     enabled = !isSaving,
                     modifier = Modifier.testTag("draft-resolve-ambiguity-button"),
                 ) {
-                    Text("我已核对标注信息")
+                    Text(stringResource(R.string.draft_resolve_ambiguity))
+                }
+            }
+            if (riskMessages.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.draft_risk_title),
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        riskMessages.forEach { message ->
+                            Text(
+                                message,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        if (riskAccepted) {
+                            Text(
+                                stringResource(R.string.draft_risk_accepted),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        } else {
+                            TextButton(
+                                onClick = onAcceptRisk,
+                                enabled = !isSaving,
+                                modifier = Modifier.testTag("draft-accept-risk-button"),
+                            ) {
+                                Text(stringResource(R.string.draft_risk_accept))
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2149,9 +2716,9 @@ private fun DraftEditorCard(
                                 label = {
                                     Text(
                                         if (draft.allDay) {
-                                            "截止日期 yyyy-MM-dd"
+                                            "截止日期（可选）yyyy-MM-dd"
                                         } else {
-                                            "截止时间 yyyy-MM-dd HH:mm"
+                                            "截止时间（可选）yyyy-MM-dd HH:mm"
                                         },
                                     )
                                 },
@@ -2315,7 +2882,7 @@ private fun DraftEditor.timeSummary(): String =
         ScheduleItemType.TODO ->
             dueLocal.takeIf(String::isNotBlank)
                 ?.let { "截止 ${it.replace("T", " ")}" }
-                ?: "缺少截止时间"
+                ?: "无截止时间"
     }
 
 private fun DraftEditor.reminderSummary(): String {
@@ -2332,15 +2899,13 @@ private fun DraftEditor.reminderSummary(): String {
 }
 
 private fun DraftEditor.repeatSummary(): String =
-    recurrenceRule.ifBlank {
-        repeatFrequency?.let { frequency ->
-            val count = repeatCount.toIntOrNull()?.coerceIn(2, 60) ?: when (frequency) {
-                RepeatFrequency.DAILY -> 7
-                RepeatFrequency.WEEKLY -> 8
-            }
-            "${frequency.label}，共 $count 次"
-        }.orEmpty()
-    }
+    repeatFrequency?.let { frequency ->
+        val count = repeatCount.toIntOrNull()?.coerceIn(2, 60) ?: when (frequency) {
+            RepeatFrequency.DAILY -> 7
+            RepeatFrequency.WEEKLY -> 8
+        }
+        "${frequency.label}，共 $count 次"
+    } ?: recurrenceRule
 
 private fun ScheduleItemType.displayName(): String =
     when (this) {
@@ -2348,6 +2913,17 @@ private fun ScheduleItemType.displayName(): String =
         ScheduleItemType.REMINDER -> "提醒"
         ScheduleItemType.TODO -> "待办"
     }
+
+private fun CalendarEvent.listTimeLabel(zoneId: ZoneId): String {
+    val formatter = DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE)
+    return when (itemType) {
+        ScheduleItemType.EVENT -> startAt.atZone(zoneId).format(formatter)
+        ScheduleItemType.REMINDER ->
+            (triggerAt ?: startAt).atZone(zoneId).format(formatter)
+        ScheduleItemType.TODO ->
+            dueAt?.atZone(zoneId)?.format(formatter)?.let { "截止 $it" } ?: "无截止时间"
+    }
+}
 
 private fun ScheduleItemPriority.displayName(): String =
     when (this) {
@@ -2451,10 +3027,13 @@ private fun CommercialSettingsContent(
     onOpenNotificationSettings: () -> Unit,
     onOpenExactAlarmSettings: () -> Unit,
     onRefreshPermissions: () -> Unit,
+    onTestConnection: () -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val context = LocalContext.current
+    var revealApiKey by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2463,13 +3042,17 @@ private fun CommercialSettingsContent(
             .testTag("settings-commercial-sheet"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("设置", style = MaterialTheme.typography.headlineSmall)
-        SettingsSection(title = "生成") {
+        Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
+        SettingsSection(title = stringResource(R.string.settings_section_ai_service)) {
+            Text(
+                stringResource(R.string.settings_ai_service_name),
+                style = MaterialTheme.typography.titleMedium,
+            )
             Text(
                 if (state.apiKeySaved) {
-                    "API key 已加密保存在本机。"
+                    stringResource(R.string.settings_api_key_saved)
                 } else {
-                    "保存 DeepSeek API key 后即可生成日程。"
+                    stringResource(R.string.settings_api_key_needed)
                 },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2479,21 +3062,112 @@ private fun CommercialSettingsContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("api-key-field"),
-                label = { Text("DeepSeek API key") },
+                label = { Text(stringResource(R.string.settings_api_key_label)) },
+                placeholder = {
+                    if (state.apiKeySaved && state.apiKeyInput.isBlank()) {
+                        Text(stringResource(R.string.settings_api_key_placeholder))
+                    }
+                },
                 singleLine = true,
+                visualTransformation = if (revealApiKey) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                trailingIcon = {
+                    IconButton(onClick = { revealApiKey = !revealApiKey }) {
+                        Icon(
+                            if (revealApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = stringResource(
+                                if (revealApiKey) {
+                                    R.string.settings_api_key_hide_description
+                                } else {
+                                    R.string.settings_api_key_show_description
+                                },
+                            ),
+                        )
+                    }
+                },
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard?.primaryClip
+                            ?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)
+                            ?.coerceToText(context)
+                            ?.toString()
+                            ?.let(onApiKeyChanged)
+                    },
+                ) {
+                    Text(stringResource(R.string.settings_action_paste))
+                }
+                TextButton(
+                    onClick = onTestConnection,
+                    enabled = state.aiConnectionState != AiConnectionState.CHECKING,
+                    modifier = Modifier.testTag("settings-test-ai-button"),
+                ) {
+                    Text(
+                        stringResource(
+                            if (state.aiConnectionState == AiConnectionState.CHECKING) {
+                                R.string.settings_action_testing
+                            } else {
+                                R.string.settings_action_test_connection
+                            },
+                        ),
+                    )
+                }
+                if (state.apiKeySaved) {
+                    TextButton(
+                        onClick = onClearApiKey,
+                        modifier = Modifier.testTag("settings-clear-key-button"),
+                    ) {
+                        Text(stringResource(R.string.settings_action_clear_key))
+                    }
+                }
+            }
+            Text(
+                stringResource(
+                    R.string.settings_connection_status,
+                    state.aiConnectionState.localizedLabel(),
+                ),
+                color = when (state.aiConnectionState) {
+                    AiConnectionState.CONNECTED -> MaterialTheme.colorScheme.primary
+                    AiConnectionState.FAILED -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            state.aiConnectionMessage?.let { message ->
+                Text(
+                    message,
+                    color = if (state.aiConnectionState == AiConnectionState.FAILED) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        SettingsSection(title = stringResource(R.string.settings_section_defaults)) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(
                     value = state.defaultDurationMinutesInput,
                     onValueChange = onDefaultDurationChanged,
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .testTag("default-duration-field"),
-                    label = { Text("默认时长") },
-                    suffix = { Text("分钟") },
+                    label = { Text(stringResource(R.string.settings_default_duration)) },
+                    suffix = { Text(stringResource(R.string.settings_minutes)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
@@ -2501,91 +3175,110 @@ private fun CommercialSettingsContent(
                     value = state.defaultReminderMinutesInput,
                     onValueChange = onDefaultReminderChanged,
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .testTag("default-reminder-field"),
-                    label = { Text("提前提醒") },
-                    suffix = { Text("分钟") },
+                    label = { Text(stringResource(R.string.settings_default_reminder)) },
+                    suffix = { Text(stringResource(R.string.settings_minutes)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                Text(
+                    stringResource(R.string.settings_default_calendar),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(
+                        R.string.settings_default_timezone,
+                        ZoneId.systemDefault().id,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        SettingsSection(title = "权限与提醒") {
+        SettingsSection(title = stringResource(R.string.settings_section_permissions)) {
             PermissionRow(
-                title = "麦克风",
+                title = stringResource(R.string.settings_permission_microphone),
                 status = state.microphonePermission,
-                action = "打开设置",
+                action = stringResource(R.string.common_open_settings),
                 onAction = onOpenAppSettings,
             )
             PermissionRow(
-                title = "通知",
+                title = stringResource(R.string.settings_permission_notifications),
                 status = state.notificationPermission,
-                action = "通知设置",
+                action = stringResource(R.string.settings_action_notification_settings),
                 onAction = onOpenNotificationSettings,
             )
             PermissionRow(
-                title = "准点提醒",
+                title = stringResource(R.string.settings_permission_exact_alarm),
                 status = state.exactAlarmPermission,
-                action = "提醒设置",
+                action = stringResource(R.string.settings_action_reminder_settings),
                 onAction = onOpenExactAlarmSettings,
             )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.settings_calendar_write),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        stringResource(R.string.settings_calendar_write_description),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    stringResource(R.string.settings_available),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
             TextButton(onClick = onRefreshPermissions) {
                 Icon(Icons.Rounded.Today, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
-                Text("刷新状态")
+                Text(stringResource(R.string.settings_action_refresh_status))
             }
         }
 
-        SettingsSection(title = "本地数据") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TextButton(
-                    onClick = onExportJson,
-                    enabled = state.events.isNotEmpty(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("settings-export-json-button"),
-                ) {
-                    Icon(Icons.Rounded.Save, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("备份")
-                }
-                TextButton(
-                    onClick = onImportJson,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("settings-import-json-button"),
-                ) {
-                    Icon(Icons.Rounded.Edit, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("导入")
-                }
-                TextButton(
-                    onClick = onExportIcs,
-                    enabled = state.events.isNotEmpty(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("settings-export-ics-button"),
-                ) {
-                    Icon(Icons.Rounded.Notifications, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("ICS")
-                }
-            }
+        SettingsSection(title = stringResource(R.string.settings_section_data)) {
+            SettingsActionRow(
+                title = stringResource(R.string.settings_backup_title),
+                description = stringResource(R.string.settings_backup_description),
+                enabled = state.events.isNotEmpty(),
+                testTag = "settings-export-json-button",
+                onClick = onExportJson,
+            )
+            SettingsActionRow(
+                title = stringResource(R.string.settings_import_title),
+                description = stringResource(R.string.settings_import_description),
+                testTag = "settings-import-json-button",
+                onClick = onImportJson,
+            )
+            SettingsActionRow(
+                title = stringResource(R.string.settings_export_ics_title),
+                description = stringResource(R.string.settings_export_ics_description),
+                enabled = state.events.isNotEmpty(),
+                testTag = "settings-export-ics-button",
+                onClick = onExportIcs,
+            )
             state.backupMessage?.let {
                 Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = onPrivacy, modifier = Modifier.testTag("settings-privacy-button")) {
-                Icon(Icons.Rounded.Settings, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text("隐私与数据说明")
-            }
+            SettingsActionRow(
+                title = stringResource(R.string.settings_privacy_title),
+                description = stringResource(R.string.settings_privacy_description),
+                testTag = "settings-privacy-button",
+                onClick = onPrivacy,
+            )
         }
 
-        SettingsSection(title = "危险操作") {
+        SettingsSection(title = stringResource(R.string.settings_section_danger)) {
             if (state.showResetConfirmation) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -2596,21 +3289,28 @@ private fun CommercialSettingsContent(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("清空本地数据？", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "会删除日程、设置、解析历史和本机 API key。备份文件不会受影响。",
+                            stringResource(R.string.settings_reset_title),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            stringResource(R.string.settings_reset_description),
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
                         ) {
-                            TextButton(onClick = onDismissReset) { Text("取消") }
+                            TextButton(onClick = onDismissReset) {
+                                Text(stringResource(R.string.common_cancel))
+                            }
                             Spacer(Modifier.width(8.dp))
                             Button(
                                 onClick = onConfirmReset,
                                 modifier = Modifier.testTag("settings-confirm-reset-button"),
-                            ) { Text("确认清空") }
+                            ) {
+                                Text(stringResource(R.string.settings_reset_confirm))
+                            }
                         }
                     }
                 }
@@ -2621,32 +3321,27 @@ private fun CommercialSettingsContent(
                 ) {
                     Icon(Icons.Rounded.Delete, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
-                    Text("清空本地数据")
+                    Text(stringResource(R.string.settings_reset_action))
                 }
             }
         }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (state.apiKeySaved) {
-                TextButton(
-                    onClick = onClearApiKey,
-                    modifier = Modifier.testTag("settings-clear-key-button"),
-                ) { Text("清除密钥") }
-            } else {
-                Spacer(Modifier.width(1.dp))
+            TextButton(
+                onClick = onClose,
+                modifier = Modifier.testTag("settings-cancel-button"),
+            ) {
+                Text(stringResource(R.string.common_cancel))
             }
-            Row(horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onClose) { Text("关闭") }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = onSave,
-                    modifier = Modifier.testTag("settings-save-button"),
-                ) { Text("保存") }
-            }
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = onSave,
+                modifier = Modifier.testTag("settings-save-button"),
+            ) { Text(stringResource(R.string.common_save)) }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -2672,6 +3367,65 @@ private fun SettingsSection(
         }
     }
 }
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    description: String,
+    testTag: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onBackground
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiConnectionState.localizedLabel(): String =
+    stringResource(
+        when (this) {
+            AiConnectionState.UNVERIFIED -> R.string.settings_ai_state_unverified
+            AiConnectionState.CHECKING -> R.string.settings_ai_state_checking
+            AiConnectionState.CONNECTED -> R.string.settings_ai_state_connected
+            AiConnectionState.FAILED -> R.string.settings_ai_state_failed
+        },
+    )
+
+@Composable
+private fun PermissionHealth.localizedLabel(): String =
+    stringResource(
+        when (this) {
+            PermissionHealth.READY -> R.string.settings_permission_ready
+            PermissionHealth.NEEDS_ACTION -> R.string.settings_permission_needs_action
+            PermissionHealth.UNAVAILABLE -> R.string.settings_permission_unavailable
+        },
+    )
 
 @Composable
 private fun PermissionRow(
@@ -2704,7 +3458,7 @@ private fun PermissionRow(
             Column {
                 Text(title, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    status.label,
+                    status.localizedLabel(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2712,7 +3466,6 @@ private fun PermissionRow(
         }
         TextButton(
             onClick = onAction,
-            enabled = status != PermissionHealth.READY,
         ) { Text(action) }
     }
 }
@@ -2734,6 +3487,7 @@ private fun SettingsSheet(
     onOpenNotificationSettings: () -> Unit,
     onOpenExactAlarmSettings: () -> Unit,
     onRefreshPermissions: () -> Unit,
+    onTestConnection: () -> Unit,
     onSave: () -> Unit,
     onClearApiKey: () -> Unit,
     onClose: () -> Unit,
@@ -2754,131 +3508,11 @@ private fun SettingsSheet(
         onOpenNotificationSettings = onOpenNotificationSettings,
         onOpenExactAlarmSettings = onOpenExactAlarmSettings,
         onRefreshPermissions = onRefreshPermissions,
+        onTestConnection = onTestConnection,
         onSave = onSave,
         onClearApiKey = onClearApiKey,
         onClose = onClose,
     )
-    return
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Text("设置", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            if (state.apiKeySaved) "DeepSeek API key 已保存在本机。" else "保存 DeepSeek API key 后即可生成日程。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = state.apiKeyInput,
-            onValueChange = onApiKeyChanged,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("api-key-field"),
-            label = { Text("DeepSeek API key") },
-            singleLine = true,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            OutlinedTextField(
-                value = state.defaultDurationMinutesInput,
-                onValueChange = onDefaultDurationChanged,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("default-duration-field"),
-                shape = RoundedCornerShape(8.dp),
-                label = { Text("默认时长") },
-                suffix = { Text("分钟") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-            OutlinedTextField(
-                value = state.defaultReminderMinutesInput,
-                onValueChange = onDefaultReminderChanged,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("default-reminder-field"),
-                shape = RoundedCornerShape(8.dp),
-                label = { Text("提前提醒") },
-                suffix = { Text("分钟") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.background,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.Notifications, contentDescription = null)
-                Column {
-                    Text("到点提醒已开启", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "每个事件都会保留 0 分钟提醒。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("本地备份", style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TextButton(
-                    onClick = onExportJson,
-                    enabled = state.events.isNotEmpty(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("settings-export-json-button"),
-                ) {
-                    Text("导出 JSON")
-                }
-                TextButton(
-                    onClick = onExportIcs,
-                    enabled = state.events.isNotEmpty(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("settings-export-ics-button"),
-                ) {
-                    Text("导出 ICS")
-                }
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (state.apiKeySaved) {
-                TextButton(
-                    onClick = onClearApiKey,
-                    modifier = Modifier.testTag("settings-clear-key-button"),
-                ) { Text("清除密钥") }
-            } else {
-                Spacer(Modifier.width(1.dp))
-            }
-            Row(horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onClose) { Text("关闭") }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = onSave,
-                    modifier = Modifier.testTag("settings-save-button"),
-                ) { Text("保存") }
-            }
-        }
-    }
 }
 
 private enum class CalendarExportFormat(

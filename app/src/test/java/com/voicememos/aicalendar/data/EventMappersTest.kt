@@ -75,4 +75,57 @@ class EventMappersTest {
 
         assertEquals(event, restored)
     }
+
+    @Test
+    fun todoWithoutDueUsesCreationTimeOnlyAsLegacyStartAnchor() {
+        val creationTime = Instant.parse("2026-07-25T05:00:00Z")
+        val staleLegacyStart = Instant.parse("2026-07-20T05:00:00Z")
+        val draft = DraftCalendarEvent(
+            title = "整理书架",
+            notes = null,
+            startAt = staleLegacyStart,
+            endAt = null,
+            allDay = false,
+            reminderMinutes = listOf(0),
+            sourceTranscript = "记一个待办：整理书架",
+            aiConfidence = 0.96,
+            missingFields = emptyList(),
+            itemType = ScheduleItemType.TODO,
+            dueAt = null,
+        )
+
+        val entity = draft.toEntity(now = creationTime)
+        val restored = entity.toDomain()
+
+        assertEquals(creationTime.toEpochMilli(), entity.startAtEpochMillis)
+        assertEquals(creationTime.toEpochMilli(), entity.createdAtEpochMillis)
+        assertNull(entity.dueAtEpochMillis)
+        assertEquals(ScheduleItemType.TODO, restored.itemType)
+        assertEquals(creationTime, restored.startAt)
+        assertNull(restored.dueAt)
+    }
+
+    @Test
+    fun todoWithDueKeepsDueAsPersistenceAnchor() {
+        val creationTime = Instant.parse("2026-07-25T05:00:00Z")
+        val dueAt = Instant.parse("2026-07-28T10:00:00Z")
+        val draft = DraftCalendarEvent(
+            title = "提交报告",
+            notes = null,
+            startAt = null,
+            endAt = null,
+            allDay = false,
+            reminderMinutes = listOf(0),
+            sourceTranscript = "周二前提交报告",
+            aiConfidence = 0.95,
+            missingFields = emptyList(),
+            itemType = ScheduleItemType.TODO,
+            dueAt = dueAt,
+        )
+
+        val entity = draft.toEntity(now = creationTime)
+
+        assertEquals(dueAt.toEpochMilli(), entity.startAtEpochMillis)
+        assertEquals(dueAt.toEpochMilli(), entity.dueAtEpochMillis)
+    }
 }
