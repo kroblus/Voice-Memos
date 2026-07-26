@@ -70,6 +70,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -108,6 +109,7 @@ import com.voicememos.aicalendar.data.exportEventsIcs
 import com.voicememos.aicalendar.data.exportEventsJson
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
+import com.voicememos.aicalendar.domain.NotificationStatus
 import com.voicememos.aicalendar.domain.ParseHistoryCreationStatus
 import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.RepeatFrequency
@@ -215,6 +217,36 @@ private fun CalendarWorkbench(
             null -> Unit
         }
         pendingDraftSaveValue = null
+    }
+    val calendarPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        viewModel.refreshPermissionStatus()
+        val granted =
+            grants[Manifest.permission.READ_CALENDAR] == true &&
+                grants[Manifest.permission.WRITE_CALENDAR] == true
+        if (granted) {
+            viewModel.setSystemCalendarEnabled(true)
+        } else {
+            viewModel.showError("未授予系统日历权限，声历将继续使用本地备用提醒。")
+        }
+    }
+    val requestSystemCalendarEnable = {
+        val calendarPermissionsGranted =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (calendarPermissionsGranted) {
+            viewModel.setSystemCalendarEnabled(true)
+        } else {
+            calendarPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.READ_CALENDAR,
+                    Manifest.permission.WRITE_CALENDAR,
+                ),
+            )
+        }
     }
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -375,6 +407,11 @@ private fun CalendarWorkbench(
                 onOpenAppSettings = viewModel::openAppSettings,
                 onOpenNotificationSettings = viewModel::openNotificationSettings,
                 onOpenExactAlarmSettings = viewModel::openExactAlarmSettings,
+                onToggleSystemCalendar = { enabled ->
+                    if (enabled) requestSystemCalendarEnable() else viewModel.setSystemCalendarEnabled(false)
+                },
+                onResyncSystemCalendar = viewModel::resyncSystemCalendar,
+                onOpenSystemCalendarSettings = viewModel::openSystemCalendarNotificationSettings,
                 onRefreshPermissions = viewModel::refreshPermissionStatus,
                 onTestConnection = viewModel::testAiConnection,
                 onSave = viewModel::saveApiKey,
@@ -411,7 +448,7 @@ private fun CalendarWorkbench(
                 onDefaultReminderChanged = viewModel::updateDefaultReminderMinutesInput,
                 onDefaultDurationChanged = viewModel::updateDefaultDurationMinutesInput,
                 onComplete = viewModel::completeOnboarding,
-                onOpenSystemSettings = viewModel::openAppSettings,
+                onEnableSystemCalendar = requestSystemCalendarEnable,
             )
         }
     }
@@ -486,7 +523,7 @@ private fun OnboardingSheet(
     onDefaultReminderChanged: (String) -> Unit,
     onDefaultDurationChanged: (String) -> Unit,
     onComplete: () -> Unit,
-    onOpenSystemSettings: () -> Unit,
+    onEnableSystemCalendar: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -503,7 +540,10 @@ private fun OnboardingSheet(
         )
         OnboardingPoint("本地日历", "日程、草稿和历史保存在设备里，不需要账号。")
         OnboardingPoint("语音优先", "麦克风权限只在录音时请求，也可以直接输入文字。")
-        OnboardingPoint("准点提醒", "保存事件时会保留 0 分钟提醒，并按需请求通知权限。")
+        OnboardingPoint(
+            "可靠提醒",
+            "可授权声历把未来安排单向复制到本机系统日历；不会同步到云端，Flyme 划掉声历后仍能提醒。",
+        )
         OutlinedTextField(
             value = state.apiKeyInput,
             onValueChange = onApiKeyChanged,
@@ -541,8 +581,11 @@ private fun OnboardingSheet(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onOpenSystemSettings) {
-                Text("系统权限")
+            TextButton(
+                onClick = onEnableSystemCalendar,
+                enabled = !state.systemCalendarEnabled && !state.calendarIntegrationBusy,
+            ) {
+                Text(if (state.systemCalendarEnabled) "系统日历已开启" else "启用系统日历提醒")
             }
             Button(
                 onClick = onComplete,
@@ -589,6 +632,10 @@ private fun PrivacyDetailsSheet(
     ) {
         Text("隐私与数据", style = MaterialTheme.typography.headlineSmall)
         PrivacyLine("本地保存", "日程、提醒、解析历史保存在本机数据库。")
+        PrivacyLine(
+            "系统日历镜像",
+            "启用后只把标题、时间、地点和备注复制到本机专属“声历”日历，不包含原始语音转写，也不写入云端日历。其他拥有日历权限的应用可能读取副本。",
+        )
         PrivacyLine("按需联网", "只有点击生成时，输入文本才会发送给 DeepSeek 解析。")
         PrivacyLine("密钥加密", "DeepSeek API key 由 Android Keystore 加密保存。")
         PrivacyLine("不做画像", "没有账号、广告、分析 SDK，也不做云同步。")
@@ -1328,6 +1375,23 @@ private fun EventRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (event.status == EventStatus.SCHEDULED) {
+                Text(
+                    when (event.notificationStatus) {
+                        NotificationStatus.SYSTEM_SCHEDULED -> "系统日历提醒"
+                        NotificationStatus.SCHEDULED -> "本地备用提醒"
+                        NotificationStatus.FAILED -> "提醒需要处理"
+                        NotificationStatus.PENDING -> "提醒同步中"
+                        NotificationStatus.NOT_REQUIRED -> "无需提醒"
+                    },
+                    color = if (event.notificationStatus == NotificationStatus.FAILED) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
         }
         IconButton(onClick = { onMarkDone(event.id) }) {
             Icon(Icons.Rounded.Check, contentDescription = "完成")
@@ -3026,6 +3090,9 @@ private fun CommercialSettingsContent(
     onOpenAppSettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenExactAlarmSettings: () -> Unit,
+    onToggleSystemCalendar: (Boolean) -> Unit,
+    onResyncSystemCalendar: () -> Unit,
+    onOpenSystemCalendarSettings: () -> Unit,
     onRefreshPermissions: () -> Unit,
     onTestConnection: () -> Unit,
     onSave: () -> Unit,
@@ -3233,11 +3300,51 @@ private fun CommercialSettingsContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    stringResource(R.string.settings_available),
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
+                Switch(
+                    checked = state.systemCalendarEnabled,
+                    onCheckedChange = onToggleSystemCalendar,
+                    enabled = !state.calendarIntegrationBusy,
+                    modifier = Modifier.testTag("settings-system-calendar-switch"),
                 )
+            }
+            Text(
+                when {
+                    state.calendarIntegrationBusy -> "正在同步系统日历…"
+                    state.systemCalendarEnabled ->
+                        "系统托管 ${state.calendarMirroredCount} 项 · 本地备用 ${state.calendarFallbackCount} 项"
+                    else -> "当前使用声历本地备用提醒"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (state.calendarSyncIssueCount > 0) {
+                Text(
+                    "${state.calendarSyncIssueCount} 项系统副本需要重新同步",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            state.calendarSyncMessage?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    onClick = onResyncSystemCalendar,
+                    enabled = !state.calendarIntegrationBusy,
+                    modifier = Modifier.testTag("settings-resync-calendar-button"),
+                ) {
+                    Text("立即重新同步")
+                }
+                TextButton(onClick = onOpenSystemCalendarSettings) {
+                    Text("系统日历通知设置")
+                }
             }
             TextButton(onClick = onRefreshPermissions) {
                 Icon(Icons.Rounded.Today, contentDescription = null)
@@ -3486,6 +3593,9 @@ private fun SettingsSheet(
     onOpenAppSettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenExactAlarmSettings: () -> Unit,
+    onToggleSystemCalendar: (Boolean) -> Unit,
+    onResyncSystemCalendar: () -> Unit,
+    onOpenSystemCalendarSettings: () -> Unit,
     onRefreshPermissions: () -> Unit,
     onTestConnection: () -> Unit,
     onSave: () -> Unit,
@@ -3507,6 +3617,9 @@ private fun SettingsSheet(
         onOpenAppSettings = onOpenAppSettings,
         onOpenNotificationSettings = onOpenNotificationSettings,
         onOpenExactAlarmSettings = onOpenExactAlarmSettings,
+        onToggleSystemCalendar = onToggleSystemCalendar,
+        onResyncSystemCalendar = onResyncSystemCalendar,
+        onOpenSystemCalendarSettings = onOpenSystemCalendarSettings,
         onRefreshPermissions = onRefreshPermissions,
         onTestConnection = onTestConnection,
         onSave = onSave,

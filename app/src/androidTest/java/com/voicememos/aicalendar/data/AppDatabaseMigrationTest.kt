@@ -75,6 +75,60 @@ class AppDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrate2To3AddsTimeZoneAndDurableMirrorTombstones() {
+        migrationHelper.createDatabase(TEST_DATABASE_V2, 2).apply {
+            execSQL(
+                """
+                INSERT INTO calendar_events (
+                    id, title, notes, startAtEpochMillis, endAtEpochMillis, allDay,
+                    reminderMinutesCsv, status, sourceTranscript, aiConfidence,
+                    createdAtEpochMillis, updatedAtEpochMillis, itemType,
+                    notificationStatus, syncStatus, externalCalendarEventId
+                ) VALUES (
+                    'v2-event', '系统日历迁移', NULL, 1784966400000, NULL, 0,
+                    '0,10', 'SCHEDULED', NULL, 1.0,
+                    1784880000000, 1784880000000, 'EVENT',
+                    'SCHEDULED', 'LOCAL_ONLY', NULL
+                )
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE_V2,
+            3,
+            true,
+            MIGRATION_2_3,
+        )
+        try {
+            migrated.query(
+                "SELECT timeZoneId FROM calendar_events WHERE id = 'v2-event'",
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertNull(cursor.getString(0))
+            }
+            migrated.execSQL(
+                """
+                INSERT INTO calendar_mirror_tombstones (
+                    localEventId, itemType, externalCalendarEventId,
+                    customAppUri, createdAtEpochMillis
+                ) VALUES (
+                    'v2-event', 'EVENT', '42',
+                    'shengli://item/event/v2-event', 1784880000000
+                )
+                """.trimIndent(),
+            )
+            migrated.query("SELECT COUNT(*) FROM calendar_mirror_tombstones").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+            }
+        } finally {
+            migrated.close()
+        }
+    }
+
     private fun insertWithCreationKey(
         database: androidx.sqlite.db.SupportSQLiteDatabase,
         id: String,
@@ -97,5 +151,6 @@ class AppDatabaseMigrationTest {
 
     private companion object {
         const val TEST_DATABASE = "migration-1-2-test"
+        const val TEST_DATABASE_V2 = "migration-2-3-test"
     }
 }

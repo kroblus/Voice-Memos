@@ -76,6 +76,13 @@ data class CalendarUiState(
     val microphonePermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
     val notificationPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
     val exactAlarmPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
+    val calendarPermission: PermissionHealth = PermissionHealth.NEEDS_ACTION,
+    val systemCalendarEnabled: Boolean = false,
+    val calendarIntegrationBusy: Boolean = false,
+    val calendarMirroredCount: Int = 0,
+    val calendarFallbackCount: Int = 0,
+    val calendarSyncIssueCount: Int = 0,
+    val calendarSyncMessage: String? = null,
     val showPrivacyDetails: Boolean = false,
     val showResetConfirmation: Boolean = false,
     val backupMessage: String? = null,
@@ -314,10 +321,13 @@ data class EventEditor(
     val endLocal: String,
     val allDay: Boolean,
     val reminderMinutes: String,
+    val timeZoneId: String,
 ) {
-    fun parsedStart(zoneId: ZoneId): Instant? = parseLocalInstant(startLocal, allDay, zoneId)
+    fun parsedStart(zoneId: ZoneId): Instant? =
+        parseLocalInstant(startLocal, allDay, resolvedZone(zoneId))
 
-    fun parsedEnd(zoneId: ZoneId): Instant? = parseLocalInstant(endLocal, allDay, zoneId)
+    fun parsedEnd(zoneId: ZoneId): Instant? =
+        parseLocalInstant(endLocal, allDay, resolvedZone(zoneId))
 
     fun parsedReminders(): List<Int> =
         reminderMinutes.split(",")
@@ -330,18 +340,26 @@ data class EventEditor(
 
     fun canSave(zoneId: ZoneId): Boolean =
         title.isNotBlank() && parsedStart(zoneId) != null
+
+    private fun resolvedZone(fallback: ZoneId): ZoneId =
+        runCatching { ZoneId.of(timeZoneId) }.getOrDefault(fallback)
 }
 
-fun CalendarEvent.toEditor(zoneId: ZoneId): EventEditor =
-    EventEditor(
+fun CalendarEvent.toEditor(zoneId: ZoneId): EventEditor {
+    val eventZone = timeZoneId
+        ?.let { value -> runCatching { ZoneId.of(value) }.getOrNull() }
+        ?: zoneId
+    return EventEditor(
         eventId = id,
         title = title,
         notes = notes.orEmpty(),
-        startLocal = startAt.formatForEditor(allDay, zoneId),
-        endLocal = endAt?.formatForEditor(allDay, zoneId).orEmpty(),
+        startLocal = startAt.formatForEditor(allDay, eventZone),
+        endLocal = endAt?.formatForEditor(allDay, eventZone).orEmpty(),
         allDay = allDay,
         reminderMinutes = reminderMinutes.joinToString(","),
+        timeZoneId = eventZone.id,
     )
+}
 
 private fun Instant.formatForEditor(allDay: Boolean, zoneId: ZoneId): String {
     val zoned = atZone(zoneId)

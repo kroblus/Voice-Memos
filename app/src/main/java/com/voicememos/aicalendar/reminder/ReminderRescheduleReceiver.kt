@@ -1,15 +1,10 @@
 package com.voicememos.aicalendar.reminder
 
-import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
-import com.voicememos.aicalendar.data.AppDatabase
-import com.voicememos.aicalendar.data.CalendarRepository
-import java.time.Instant
+import com.voicememos.aicalendar.ShengliApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,22 +18,15 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching {
-                val repository = CalendarRepository(
-                    AppDatabase.get(appContext).calendarEventDao(),
-                )
-                val scheduler = ReminderScheduler(appContext)
-                val notificationAllowed =
-                    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                        appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-                        PackageManager.PERMISSION_GRANTED
-                repository.futureScheduled(Instant.now())
-                    .forEach { event ->
-                        val results = scheduler.scheduleWithResults(event)
-                        repository.updateNotificationStatus(
-                            event.id,
-                            results.toNotificationStatus(notificationAllowed),
-                        )
-                    }
+                val reason = when (intent.action) {
+                    Intent.ACTION_BOOT_COMPLETED -> ReconcileReason.BOOT
+                    Intent.ACTION_TIME_CHANGED -> ReconcileReason.TIME_CHANGED
+                    Intent.ACTION_TIMEZONE_CHANGED -> ReconcileReason.TIME_ZONE_CHANGED
+                    Intent.ACTION_MY_PACKAGE_REPLACED -> ReconcileReason.PACKAGE_UPDATED
+                    else -> ReconcileReason.PERMISSION_CHANGED
+                }
+                (appContext as ShengliApplication).container.reminderCoordinator
+                    .reconcileAll(reason)
             }.onFailure { error ->
                 Log.e(TAG, "Unable to restore local reminders.", error)
             }

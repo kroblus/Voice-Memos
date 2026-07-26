@@ -30,9 +30,10 @@ fun exportEventsJson(events: List<CalendarEvent>): String =
         |    "location": ${event.location?.let { "\"${it.escapeJson()}\"" } ?: "null"},
         |    "recurrenceRule": ${event.recurrenceRule?.let { "\"${it.escapeJson()}\"" } ?: "null"},
         |    "priority": ${event.priority?.let { "\"${it.name}\"" } ?: "null"},
-        |    "notificationStatus": "${event.notificationStatus.name}",
-        |    "syncStatus": "${event.syncStatus.name}",
-        |    "externalCalendarEventId": ${event.externalCalendarEventId?.let { "\"${it.escapeJson()}\"" } ?: "null"},
+        |    "notificationStatus": "PENDING",
+        |    "syncStatus": "LOCAL_ONLY",
+        |    "externalCalendarEventId": null,
+        |    "timeZoneId": ${event.timeZoneId?.let { "\"${it.escapeJson()}\"" } ?: "null"},
         |    "creationKey": ${event.creationKey?.let { "\"${it.escapeJson()}\"" } ?: "null"}
         |  }
         """.trimMargin()

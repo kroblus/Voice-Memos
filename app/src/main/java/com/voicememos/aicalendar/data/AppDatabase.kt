@@ -30,17 +30,37 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
     }
 }
 
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE calendar_events ADD COLUMN timeZoneId TEXT")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS calendar_mirror_tombstones (
+                localEventId TEXT NOT NULL,
+                itemType TEXT NOT NULL,
+                externalCalendarEventId TEXT,
+                customAppUri TEXT NOT NULL,
+                createdAtEpochMillis INTEGER NOT NULL,
+                PRIMARY KEY(localEventId)
+            )
+            """.trimIndent(),
+        )
+    }
+}
+
 @Database(
     entities = [
         CalendarEventEntity::class,
         AppSettingEntity::class,
+        CalendarMirrorTombstoneEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun calendarEventDao(): CalendarEventDao
     abstract fun appSettingDao(): AppSettingDao
+    abstract fun calendarMirrorTombstoneDao(): CalendarMirrorTombstoneDao
 
     companion object {
         @Volatile
@@ -53,7 +73,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "shengli.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }

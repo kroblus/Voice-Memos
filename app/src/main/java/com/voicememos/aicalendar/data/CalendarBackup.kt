@@ -21,7 +21,7 @@ data class CalendarBackupImportResult(
 
 @Serializable
 private data class CalendarBackupPayload(
-    val schemaVersion: Int = 2,
+    val schemaVersion: Int = 3,
     val exportedAt: String,
     val events: List<CalendarBackupEvent> = emptyList(),
 )
@@ -48,6 +48,7 @@ private data class CalendarBackupEvent(
     val syncStatus: String = SyncStatus.LOCAL_ONLY.name,
     val externalCalendarEventId: String? = null,
     val creationKey: String? = null,
+    val timeZoneId: String? = null,
 )
 
 fun exportCalendarBackup(
@@ -98,10 +99,11 @@ private fun CalendarEvent.toBackupEvent(): CalendarBackupEvent =
         location = location,
         recurrenceRule = recurrenceRule,
         priority = priority?.name,
-        notificationStatus = notificationStatus.name,
-        syncStatus = syncStatus.name,
-        externalCalendarEventId = externalCalendarEventId,
+        notificationStatus = NotificationStatus.PENDING.name,
+        syncStatus = SyncStatus.LOCAL_ONLY.name,
+        externalCalendarEventId = null,
         creationKey = creationKey,
+        timeZoneId = timeZoneId,
     )
 
 private fun CalendarBackupEvent.toDomain(): CalendarEvent? {
@@ -131,10 +133,11 @@ private fun CalendarBackupEvent.toDomain(): CalendarEvent? {
         location = location.normalized(),
         recurrenceRule = recurrenceRule.normalized(),
         priority = priority?.toEnumOrNull<ScheduleItemPriority>(),
-        notificationStatus = notificationStatus.toEnumOrDefault(NotificationStatus.PENDING),
-        syncStatus = syncStatus.toEnumOrDefault(SyncStatus.LOCAL_ONLY),
-        externalCalendarEventId = externalCalendarEventId.normalized(),
+        notificationStatus = NotificationStatus.PENDING,
+        syncStatus = SyncStatus.LOCAL_ONLY,
+        externalCalendarEventId = null,
         creationKey = creationKey.normalized(),
+        timeZoneId = timeZoneId.normalized(),
     )
 }
 

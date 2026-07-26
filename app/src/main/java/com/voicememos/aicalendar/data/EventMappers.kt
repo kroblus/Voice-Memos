@@ -32,6 +32,7 @@ fun CalendarEventEntity.toDomain(): CalendarEvent =
         syncStatus = syncStatus.toEnumOrDefault(SyncStatus.LOCAL_ONLY),
         externalCalendarEventId = externalCalendarEventId,
         creationKey = creationKey,
+        timeZoneId = timeZoneId,
     )
 
 fun DraftCalendarEvent.toEntity(
@@ -70,9 +71,10 @@ fun DraftCalendarEvent.toEntity(
         recurrenceRule = recurrenceRule.normalized(),
         priority = priority?.name,
         notificationStatus = NotificationStatus.PENDING.name,
-        syncStatus = SyncStatus.LOCAL_ONLY.name,
+        syncStatus = SyncStatus.PENDING.name,
         externalCalendarEventId = null,
         creationKey = creationKey.normalized(),
+        timeZoneId = timeZoneId.normalized(),
     )
 }
 
@@ -100,6 +102,7 @@ fun CalendarEvent.toEntity(now: Instant = Instant.now()): CalendarEventEntity =
         syncStatus = syncStatus.name,
         externalCalendarEventId = externalCalendarEventId.normalized(),
         creationKey = creationKey.normalized(),
+        timeZoneId = timeZoneId.normalized(),
     )
 
 fun List<Int>.toReminderCsv(): String =

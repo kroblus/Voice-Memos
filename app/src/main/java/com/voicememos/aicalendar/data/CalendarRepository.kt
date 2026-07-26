@@ -4,12 +4,15 @@ import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.DraftCalendarEvent
 import com.voicememos.aicalendar.domain.EventStatus
 import com.voicememos.aicalendar.domain.NotificationStatus
+import com.voicememos.aicalendar.domain.SyncStatus
 import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 class CalendarRepository(
     private val dao: CalendarEventDao,
+    private val tombstoneDao: CalendarMirrorTombstoneDao? = null,
 ) {
     fun observeEvents(rangeStart: Instant, rangeEnd: Instant): Flow<List<CalendarEvent>> =
         dao.observeEvents(rangeStart.toEpochMilli(), rangeEnd.toEpochMilli())
@@ -20,6 +23,10 @@ class CalendarRepository(
 
     suspend fun futureScheduled(from: Instant): List<CalendarEvent> =
         dao.futureScheduled(from.toEpochMilli()).map(CalendarEventEntity::toDomain)
+
+    suspend fun getById(id: String): CalendarEvent? = dao.findById(id)?.toDomain()
+
+    suspend fun getAll(): List<CalendarEvent> = dao.getAll().map(CalendarEventEntity::toDomain)
 
     suspend fun createFromDraft(
         draft: DraftCalendarEvent,
@@ -42,7 +49,15 @@ class CalendarRepository(
 
     suspend fun importEvents(events: List<CalendarEvent>): Int {
         if (events.isEmpty()) return 0
-        dao.upsertAll(events.map(CalendarEvent::toEntity))
+        dao.upsertAll(
+            events.map { event ->
+                event.copy(
+                    notificationStatus = NotificationStatus.PENDING,
+                    syncStatus = SyncStatus.LOCAL_ONLY,
+                    externalCalendarEventId = null,
+                ).toEntity()
+            },
+        )
         return events.size
     }
 
@@ -66,6 +81,24 @@ class CalendarRepository(
         )
     }
 
+    suspend fun updateMirrorState(
+        id: String,
+        syncStatus: SyncStatus,
+        notificationStatus: NotificationStatus,
+        externalCalendarEventId: String?,
+        timeZoneId: String?,
+        updatedAt: Instant = Instant.now(),
+    ) {
+        dao.updateMirrorState(
+            id = id,
+            syncStatus = syncStatus.name,
+            notificationStatus = notificationStatus.name,
+            externalCalendarEventId = externalCalendarEventId,
+            timeZoneId = timeZoneId,
+            updatedAt = updatedAt.toEpochMilli(),
+        )
+    }
+
     suspend fun updateDetails(
         original: CalendarEvent,
         title: String,
@@ -74,6 +107,7 @@ class CalendarRepository(
         endAt: Instant?,
         allDay: Boolean,
         reminderMinutes: List<Int>,
+        timeZoneId: String? = original.timeZoneId,
     ): CalendarEvent {
         val updatedTriggerAt = when (original.itemType) {
             com.voicememos.aicalendar.domain.ScheduleItemType.REMINDER -> startAt
@@ -93,6 +127,9 @@ class CalendarRepository(
             dueAt = updatedDueAt,
             allDay = allDay,
             reminderMinutes = reminderMinutes.toReminderCsv().toReminderMinutes(),
+            timeZoneId = timeZoneId ?: original.timeZoneId ?: ZoneId.systemDefault().id,
+            notificationStatus = NotificationStatus.PENDING,
+            syncStatus = SyncStatus.PENDING,
         )
         dao.updateDetails(
             id = original.id,
@@ -104,9 +141,37 @@ class CalendarRepository(
             dueAt = updated.dueAt?.toEpochMilli(),
             allDay = updated.allDay,
             reminderMinutes = updated.reminderMinutes.toReminderCsv(),
+            timeZoneId = updated.timeZoneId,
             updatedAt = Instant.now().toEpochMilli(),
         )
         return updated
+    }
+
+    suspend fun addMirrorTombstone(event: CalendarEvent) {
+        tombstoneDao?.upsert(
+            CalendarMirrorTombstoneEntity(
+                localEventId = event.id,
+                itemType = event.itemType.name,
+                externalCalendarEventId = event.externalCalendarEventId,
+                customAppUri = event.customAppUri(),
+                createdAtEpochMillis = Instant.now().toEpochMilli(),
+            ),
+        )
+    }
+
+    suspend fun getMirrorTombstones(): List<CalendarMirrorTombstoneEntity> =
+        tombstoneDao?.getAll().orEmpty()
+
+    suspend fun deleteMirrorTombstone(localEventId: String) {
+        tombstoneDao?.delete(localEventId)
+    }
+
+    suspend fun clearMirrorTombstones() {
+        tombstoneDao?.deleteAll()
+    }
+
+    suspend fun resetAllMirrorLinks() {
+        dao.resetAllMirrorLinks(Instant.now().toEpochMilli())
     }
 
     suspend fun delete(id: String) {
@@ -125,3 +190,5 @@ class CalendarRepository(
         const val INSERT_IGNORED = -1L
     }
 }
+
+fun CalendarEvent.customAppUri(): String = "shengli://item/${itemType.name.lowercase()}/$id"

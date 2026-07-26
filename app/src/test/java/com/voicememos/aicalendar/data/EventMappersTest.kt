@@ -67,6 +67,7 @@ class EventMappersTest {
             syncStatus = SyncStatus.SYNCED,
             externalCalendarEventId = "calendar-42",
             creationKey = "session-1:item-1",
+            timeZoneId = "Asia/Shanghai",
         )
 
         val restored = event.toEntity(

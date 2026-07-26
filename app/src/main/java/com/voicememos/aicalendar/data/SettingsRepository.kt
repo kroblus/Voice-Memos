@@ -17,6 +17,9 @@ class SettingsRepository(
     fun observeOnboardingSeen(): Flow<Boolean> =
         dao.observeValue(ONBOARDING_SEEN).map { it == "true" }
 
+    fun observeSystemCalendarEnabled(): Flow<Boolean> =
+        dao.observeValue(SYSTEM_CALENDAR_ENABLED).map { it == "true" }
+
     fun observeParseHistory(): Flow<List<ParseHistoryItem>> =
         dao.observeValue(PARSE_HISTORY).map(::decodeParseHistory)
 
@@ -27,6 +30,13 @@ class SettingsRepository(
     suspend fun setOnboardingSeen(value: Boolean) {
         dao.set(AppSettingEntity(ONBOARDING_SEEN, value.toString()))
     }
+
+    suspend fun setSystemCalendarEnabled(value: Boolean) {
+        dao.set(AppSettingEntity(SYSTEM_CALENDAR_ENABLED, value.toString()))
+    }
+
+    suspend fun isSystemCalendarEnabled(): Boolean =
+        dao.getValue(SYSTEM_CALENDAR_ENABLED) == "true"
 
     suspend fun setDefaultReminderMinutes(value: Int) {
         dao.set(AppSettingEntity(DEFAULT_REMINDER_MINUTES, value.coerceAtLeast(0).toString()))
@@ -126,6 +136,7 @@ class SettingsRepository(
         const val DEFAULT_DURATION_MINUTES = "default_duration_minutes"
         const val THEME_MODE = "theme_mode"
         const val ONBOARDING_SEEN = "onboarding_seen"
+        const val SYSTEM_CALENDAR_ENABLED = "system_calendar_enabled"
         const val PARSE_HISTORY = "parse_history"
         const val MAX_PARSE_HISTORY = 50
     }

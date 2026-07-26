@@ -20,6 +20,12 @@ interface CalendarEventDao {
     @Query("SELECT * FROM calendar_events WHERE creationKey = :creationKey LIMIT 1")
     suspend fun findByCreationKey(creationKey: String): CalendarEventEntity?
 
+    @Query("SELECT * FROM calendar_events WHERE id = :id LIMIT 1")
+    suspend fun findById(id: String): CalendarEventEntity?
+
+    @Query("SELECT * FROM calendar_events ORDER BY createdAtEpochMillis ASC")
+    suspend fun getAll(): List<CalendarEventEntity>
+
     @Query(
         """
         SELECT * FROM calendar_events
@@ -80,7 +86,15 @@ interface CalendarEventDao {
     )
     suspend fun nextScheduled(nowEpochMillis: Long): CalendarEventEntity?
 
-    @Query("UPDATE calendar_events SET status = :status, updatedAtEpochMillis = :updatedAt WHERE id = :id")
+    @Query(
+        """
+        UPDATE calendar_events
+        SET status = :status,
+            syncStatus = 'PENDING',
+            updatedAtEpochMillis = :updatedAt
+        WHERE id = :id
+        """,
+    )
     suspend fun updateStatus(id: String, status: String, updatedAt: Long)
 
     @Query(
@@ -100,6 +114,26 @@ interface CalendarEventDao {
     @Query(
         """
         UPDATE calendar_events
+        SET syncStatus = :syncStatus,
+            notificationStatus = :notificationStatus,
+            externalCalendarEventId = :externalCalendarEventId,
+            timeZoneId = :timeZoneId,
+            updatedAtEpochMillis = :updatedAt
+        WHERE id = :id
+        """,
+    )
+    suspend fun updateMirrorState(
+        id: String,
+        syncStatus: String,
+        notificationStatus: String,
+        externalCalendarEventId: String?,
+        timeZoneId: String?,
+        updatedAt: Long,
+    )
+
+    @Query(
+        """
+        UPDATE calendar_events
         SET title = :title,
             notes = :notes,
             startAtEpochMillis = :startAt,
@@ -108,6 +142,9 @@ interface CalendarEventDao {
             dueAtEpochMillis = :dueAt,
             allDay = :allDay,
             reminderMinutesCsv = :reminderMinutes,
+            timeZoneId = :timeZoneId,
+            notificationStatus = 'PENDING',
+            syncStatus = 'PENDING',
             updatedAtEpochMillis = :updatedAt
         WHERE id = :id
         """,
@@ -122,8 +159,20 @@ interface CalendarEventDao {
         dueAt: Long?,
         allDay: Boolean,
         reminderMinutes: String,
+        timeZoneId: String?,
         updatedAt: Long,
     )
+
+    @Query(
+        """
+        UPDATE calendar_events
+        SET syncStatus = 'LOCAL_ONLY',
+            notificationStatus = 'PENDING',
+            externalCalendarEventId = NULL,
+            updatedAtEpochMillis = :updatedAt
+        """,
+    )
+    suspend fun resetAllMirrorLinks(updatedAt: Long)
 
     @Query("DELETE FROM calendar_events WHERE id = :id")
     suspend fun deleteById(id: String)

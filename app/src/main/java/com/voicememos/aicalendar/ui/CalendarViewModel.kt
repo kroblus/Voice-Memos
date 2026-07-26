@@ -8,10 +8,12 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.Manifest
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voicememos.aicalendar.ai.DeepSeekCalendarParser
+import com.voicememos.aicalendar.calendar.CalendarMirrorGateway
 import com.voicememos.aicalendar.data.CalendarRepository
 import com.voicememos.aicalendar.data.SettingsRepository
 import com.voicememos.aicalendar.data.decodeCalendarBackup
@@ -24,12 +26,14 @@ import com.voicememos.aicalendar.domain.ParseHistoryItem
 import com.voicememos.aicalendar.domain.ParseHistoryScheduleItemSummary
 import com.voicememos.aicalendar.domain.ScheduleRiskDetector
 import com.voicememos.aicalendar.domain.ScheduleItemType
+import com.voicememos.aicalendar.domain.NotificationStatus
+import com.voicememos.aicalendar.domain.SyncStatus
 import com.voicememos.aicalendar.domain.VoiceWorkflowErrorMapper
 import com.voicememos.aicalendar.domain.VoiceWorkflowError
 import com.voicememos.aicalendar.domain.expandOccurrences
+import com.voicememos.aicalendar.reminder.ReconcileReason
+import com.voicememos.aicalendar.reminder.ReminderCoordinator
 import com.voicememos.aicalendar.reminder.ReminderScheduler
-import com.voicememos.aicalendar.reminder.ScheduleResult
-import com.voicememos.aicalendar.reminder.toNotificationStatus
 import com.voicememos.aicalendar.security.SecureApiKeyStore
 import com.voicememos.aicalendar.ui.session.CreationBatchSummary
 import com.voicememos.aicalendar.ui.session.CreationItemOutcome
@@ -56,7 +60,8 @@ class CalendarViewModel(
     private val settingsRepository: SettingsRepository,
     private val secureApiKeyStore: SecureApiKeyStore,
     private val parser: DeepSeekCalendarParser,
-    private val reminderScheduler: ReminderScheduler,
+    private val reminderCoordinator: ReminderCoordinator,
+    private val calendarMirrorGateway: CalendarMirrorGateway,
     private val zoneId: ZoneId = ZoneId.systemDefault(),
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
@@ -73,7 +78,21 @@ class CalendarViewModel(
     init {
         viewModelScope.launch {
             calendarRepository.observeAllActive().collect { events ->
-                _uiState.update { it.copy(events = events) }
+                _uiState.update {
+                    it.copy(
+                        events = events,
+                        calendarMirroredCount = events.count { event ->
+                            event.notificationStatus == NotificationStatus.SYSTEM_SCHEDULED
+                        },
+                        calendarFallbackCount = events.count { event ->
+                            event.notificationStatus == NotificationStatus.SCHEDULED &&
+                                event.syncStatus == SyncStatus.FAILED
+                        },
+                        calendarSyncIssueCount = events.count { event ->
+                            event.syncStatus == SyncStatus.FAILED
+                        },
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -91,6 +110,13 @@ class CalendarViewModel(
                 .distinctUntilChanged()
                 .collect { seen ->
                     _uiState.update { it.copy(onboardingSeen = seen) }
+                }
+        }
+        viewModelScope.launch {
+            settingsRepository.observeSystemCalendarEnabled()
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    _uiState.update { it.copy(systemCalendarEnabled = enabled) }
                 }
         }
         viewModelScope.launch {
@@ -119,6 +145,9 @@ class CalendarViewModel(
                 }
         }
         refreshPermissionStatus()
+        viewModelScope.launch {
+            reminderCoordinator.reconcileAll(ReconcileReason.STARTUP)
+        }
     }
 
     fun selectDate(date: LocalDate) {
@@ -199,25 +228,47 @@ class CalendarViewModel(
                 PermissionHealth.READY
             else -> PermissionHealth.NEEDS_ACTION
         }
-        val notificationStatus = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            PermissionHealth.READY
-        } else if (appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            PermissionHealth.READY
-        } else {
-            PermissionHealth.NEEDS_ACTION
-        }
+        val notificationManager = appContext.getSystemService(NotificationManager::class.java)
+        val runtimeNotificationAllowed =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        val fallbackChannelAllowed =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                notificationManager.getNotificationChannel(ReminderScheduler.CHANNEL_ID)
+                    ?.importance != NotificationManager.IMPORTANCE_NONE
+        val notificationStatus =
+            if (
+                runtimeNotificationAllowed &&
+                notificationManager.areNotificationsEnabled() &&
+                fallbackChannelAllowed
+            ) {
+                PermissionHealth.READY
+            } else {
+                PermissionHealth.NEEDS_ACTION
+            }
         val exactAlarmStatus = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             PermissionHealth.READY
         } else {
             val alarmManager = appContext.getSystemService(AlarmManager::class.java)
             if (alarmManager.canScheduleExactAlarms()) PermissionHealth.READY else PermissionHealth.NEEDS_ACTION
         }
+        val calendarPermissionStatus =
+            if (calendarMirrorGateway.hasCalendarPermissions()) {
+                PermissionHealth.READY
+            } else {
+                PermissionHealth.NEEDS_ACTION
+            }
         _uiState.update {
             it.copy(
                 microphonePermission = microphoneStatus,
                 notificationPermission = notificationStatus,
                 exactAlarmPermission = exactAlarmStatus,
+                calendarPermission = calendarPermissionStatus,
             )
+        }
+        viewModelScope.launch {
+            reminderCoordinator.reconcileAll(ReconcileReason.PERMISSION_CHANGED)
         }
     }
 
@@ -248,6 +299,59 @@ class CalendarViewModel(
                 .setData(Uri.parse("package:${appContext.packageName}"))
         }
         startSettingsIntent(intent)
+    }
+
+    fun openSystemCalendarNotificationSettings() {
+        val calendarIntent = Intent(Intent.ACTION_VIEW)
+            .setData(Uri.parse("content://com.android.calendar/time/${System.currentTimeMillis()}"))
+        val calendarPackage = appContext.packageManager
+            .resolveActivity(calendarIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?.packageName
+        val settingsIntent = calendarPackage?.let { packageName ->
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        } ?: calendarIntent
+        startSettingsIntent(settingsIntent)
+    }
+
+    fun setSystemCalendarEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(calendarIntegrationBusy = true, calendarSyncMessage = null) }
+            val success = if (enabled) {
+                reminderCoordinator.enableSystemCalendar()
+            } else {
+                reminderCoordinator.disableAndDeleteSystemCalendar()
+            }
+            _uiState.update {
+                it.copy(
+                    calendarIntegrationBusy = false,
+                    calendarSyncMessage = when {
+                        success && enabled -> "未来日程已同步到本机“声历”日历"
+                        success -> "系统副本已删除，已恢复本地备用提醒"
+                        !calendarMirrorGateway.hasCalendarPermissions() ->
+                            "需要先授予系统日历读写权限"
+                        else -> "系统日历操作失败，请稍后重试"
+                    },
+                    errorMessage = if (success) null else "系统日历设置未完成",
+                )
+            }
+            refreshPermissionStatus()
+        }
+    }
+
+    fun resyncSystemCalendar() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(calendarIntegrationBusy = true, calendarSyncMessage = null) }
+            val results = reminderCoordinator.reconcileAll(ReconcileReason.MANUAL)
+            val warnings = results.mapNotNull { it.warning }.distinct()
+            _uiState.update {
+                it.copy(
+                    calendarIntegrationBusy = false,
+                    calendarSyncMessage = warnings.firstOrNull() ?: "系统日历同步完成",
+                )
+            }
+        }
     }
 
     fun updateTextInput(value: String) {
@@ -647,7 +751,6 @@ class CalendarViewModel(
             val savedEvents = mutableListOf<CalendarEvent>()
             val savedDraftIds = mutableSetOf<String>()
             val outcomes = mutableListOf<CreationItemOutcome>()
-            val notificationAllowed = hasNotificationPermission()
             try {
                 preparedDrafts.forEach { (editor, draft) ->
                     val eventsForDraft = mutableListOf<CalendarEvent>()
@@ -660,10 +763,7 @@ class CalendarViewModel(
                             )
                             eventsForDraft += event
                             savedEvents += event
-                            val scheduleResults = reminderScheduler.scheduleWithResults(event)
-                            val notificationStatus = scheduleResults.toNotificationStatus(notificationAllowed)
-                            calendarRepository.updateNotificationStatus(event.id, notificationStatus)
-                            scheduleResults.toSchedulingWarning(notificationAllowed)
+                            reminderCoordinator.reconcileItem(event).warning
                                 ?.let(schedulingWarnings::add)
                         }
                         savedDraftIds += editor.draftId
@@ -799,8 +899,7 @@ class CalendarViewModel(
         viewModelScope.launch {
             try {
                 eventsToUndo.forEach { event ->
-                    reminderScheduler.cancel(event.id, event.reminderMinutes)
-                    calendarRepository.delete(event.id)
+                    reminderCoordinator.removeItem(event)
                 }
                 settingsRepository.updateParseHistoryUndone(historyId, isUndone = true)
                 lastCreatedEvents = emptyList()
@@ -834,21 +933,22 @@ class CalendarViewModel(
     }
 
     fun markDone(eventId: String) {
-        _uiState.value.events.firstOrNull { it.id == eventId }?.let { event ->
-            reminderScheduler.cancel(event.id, event.reminderMinutes)
-        }
         viewModelScope.launch {
             calendarRepository.updateStatus(eventId, EventStatus.DONE)
+            calendarRepository.getById(eventId)?.let { reminderCoordinator.reconcileItem(it) }
             ShengliWidgetProvider.updateAll(appContext)
         }
     }
 
     fun deleteEvent(eventId: String) {
-        _uiState.value.events.firstOrNull { it.id == eventId }?.let { event ->
-            reminderScheduler.cancel(event.id, event.reminderMinutes)
-        }
+        val event = _uiState.value.events.firstOrNull { it.id == eventId } ?: return
         viewModelScope.launch {
-            calendarRepository.delete(eventId)
+            val completelyRemoved = reminderCoordinator.removeItem(event)
+            if (!completelyRemoved) {
+                _uiState.update {
+                    it.copy(errorMessage = "本地项目已删除；系统日历副本将在权限恢复后清理。")
+                }
+            }
             ShengliWidgetProvider.updateAll(appContext)
         }
     }
@@ -856,6 +956,30 @@ class CalendarViewModel(
     fun openEventEditor(eventId: String) {
         val event = _uiState.value.events.firstOrNull { it.id == eventId } ?: return
         _uiState.update { it.copy(eventEditor = event.toEditor(zoneId), errorMessage = null) }
+    }
+
+    fun openExternalEvent(customUri: String) {
+        val uri = runCatching { Uri.parse(customUri) }.getOrNull()
+        val eventId = uri
+            ?.takeIf { it.scheme == "shengli" && it.host == "item" }
+            ?.lastPathSegment
+            ?.takeIf(String::isNotBlank)
+            ?: return
+        viewModelScope.launch {
+            val event = calendarRepository.getById(eventId)
+            if (event == null) {
+                _uiState.update { it.copy(errorMessage = "这项日程已不存在。") }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        selectedDate = event.displayAnchor().atZone(zoneId).toLocalDate(),
+                        eventEditor = event.toEditor(zoneId),
+                        showSettings = false,
+                        errorMessage = null,
+                    )
+                }
+            }
+        }
     }
 
     fun updateEventEditor(transform: (EventEditor) -> EventEditor) {
@@ -891,18 +1015,9 @@ class CalendarViewModel(
                 endAt = end,
                 allDay = editor.allDay,
                 reminderMinutes = editor.parsedReminders(),
+                timeZoneId = editor.timeZoneId,
             )
-            reminderScheduler.cancel(original.id, original.reminderMinutes)
-            var schedulingWarning: String? = null
-            if (updated.status == EventStatus.SCHEDULED) {
-                val notificationAllowed = hasNotificationPermission()
-                val scheduleResults = reminderScheduler.scheduleWithResults(updated)
-                calendarRepository.updateNotificationStatus(
-                    updated.id,
-                    scheduleResults.toNotificationStatus(notificationAllowed),
-                )
-                schedulingWarning = scheduleResults.toSchedulingWarning(notificationAllowed)
-            }
+            val schedulingWarning = reminderCoordinator.reconcileItem(updated).warning
             _uiState.update {
                 it.copy(
                     selectedDate = updated.startAt.atZone(zoneId).toLocalDate(),
@@ -924,11 +1039,11 @@ class CalendarViewModel(
     }
 
     fun clearCompletedEvents() {
-        val completed = _uiState.value.events.count { it.status == EventStatus.DONE }
-        if (completed == 0) return
+        val completedEvents = _uiState.value.events.filter { it.status == EventStatus.DONE }
+        if (completedEvents.isEmpty()) return
         viewModelScope.launch {
-            calendarRepository.deleteCompleted()
-            _uiState.update { it.copy(successMessage = "已清理 $completed 项") }
+            reminderCoordinator.deleteAllItems(completedEvents)
+            _uiState.update { it.copy(successMessage = "已清理 ${completedEvents.size} 项") }
             ShengliWidgetProvider.updateAll(appContext)
         }
     }
@@ -993,9 +1108,7 @@ class CalendarViewModel(
                 }
                 val result = decodeCalendarBackup(raw)
                 val importedCount = calendarRepository.importEvents(result.events)
-                result.events
-                    .filter { it.status == EventStatus.SCHEDULED }
-                    .forEach(reminderScheduler::schedule)
+                reminderCoordinator.reconcileAll(ReconcileReason.IMPORT)
                 importedCount to result.skippedCount
             }.onSuccess { (importedCount, skippedCount) ->
                 _uiState.update {
@@ -1041,19 +1154,21 @@ class CalendarViewModel(
         returnToCreationResultAfterSettings = false
         val existingEvents = _uiState.value.events
         viewModelScope.launch {
-            existingEvents.forEach { event ->
-                reminderScheduler.cancel(event.id, event.reminderMinutes)
-            }
-            calendarRepository.deleteAll()
+            val externalCleanupComplete = reminderCoordinator.deleteAllItems(existingEvents)
             settingsRepository.clearAll()
             secureApiKeyStore.clear()
             _uiState.update {
                 CalendarUiState(
                     apiKeySaved = false,
-                    successMessage = "本地数据已清空",
+                    successMessage = if (externalCleanupComplete) {
+                        "本地数据和系统日历副本已清空"
+                    } else {
+                        "本地数据已清空；部分系统副本等待权限恢复后清理"
+                    },
                     microphonePermission = it.microphonePermission,
                     notificationPermission = it.notificationPermission,
                     exactAlarmPermission = it.exactAlarmPermission,
+                    calendarPermission = it.calendarPermission,
                 )
             }
             ShengliWidgetProvider.updateAll(appContext)
@@ -1317,23 +1432,6 @@ class CalendarViewModel(
             messages.takeIf(List<String>::isNotEmpty)?.let { editor.draftId to it }
         }.toMap()
     }
-
-    private fun Map<Int, ScheduleResult>.toSchedulingWarning(
-        notificationAllowed: Boolean,
-    ): String? =
-        when {
-            values.all { it == ScheduleResult.NOT_REQUIRED } -> null
-            !notificationAllowed -> "事项已保存，但通知权限未开启，提醒未能送达。"
-            values.any { it == ScheduleResult.FAILED } -> "事项已保存，但提醒安排失败。"
-            values.any { it == ScheduleResult.SKIPPED_PAST } -> "事项已保存，但过去时间的提醒未安排。"
-            values.any { it == ScheduleResult.INEXACT } -> "事项已保存；未开启准点提醒，系统将使用近似时间。"
-            else -> null
-        }
-
-    private fun hasNotificationPermission(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
 
     private fun CalendarEvent.displayAnchor(): java.time.Instant =
         when (itemType) {

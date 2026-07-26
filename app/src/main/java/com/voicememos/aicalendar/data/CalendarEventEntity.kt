@@ -37,4 +37,5 @@ data class CalendarEventEntity(
     val syncStatus: String = "LOCAL_ONLY",
     val externalCalendarEventId: String? = null,
     val creationKey: String? = null,
+    val timeZoneId: String? = null,
 )

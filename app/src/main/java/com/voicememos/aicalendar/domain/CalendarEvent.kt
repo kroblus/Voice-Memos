@@ -5,6 +5,7 @@ import java.time.Instant
 enum class NotificationStatus {
     PENDING,
     SCHEDULED,
+    SYSTEM_SCHEDULED,
     FAILED,
     NOT_REQUIRED,
 }
@@ -37,4 +38,5 @@ data class CalendarEvent(
     val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY,
     val externalCalendarEventId: String? = null,
     val creationKey: String? = null,
+    val timeZoneId: String? = null,
 )

@@ -28,7 +28,7 @@ class CalendarBackupTest {
         )
         val decoded = decodeCalendarBackup(backup)
 
-        assertTrue(backup.contains("\"schemaVersion\": 2"))
+        assertTrue(backup.contains("\"schemaVersion\": 3"))
         assertTrue(backup.contains("\"exportedAt\": \"2026-06-18T00:00:00Z\""))
         assertFalse(backup.contains("deepseek"))
         assertFalse(backup.contains("apiKey"))
@@ -38,7 +38,7 @@ class CalendarBackupTest {
     }
 
     @Test
-    fun backupV2RoundTripsTypedTodoAndSyncFields() {
+    fun backupV3PreservesBusinessFieldsButResetsDeviceLocalDeliveryState() {
         val dueAt = Instant.parse("2026-07-31T09:00:00Z")
         val event = CalendarEvent(
             id = "todo-1",
@@ -60,6 +60,7 @@ class CalendarBackupTest {
             syncStatus = SyncStatus.SYNCED,
             externalCalendarEventId = "external-7",
             creationKey = "session-7:item-2",
+            timeZoneId = "Asia/Shanghai",
         )
 
         val backup = exportCalendarBackup(listOf(event))
@@ -67,7 +68,12 @@ class CalendarBackupTest {
 
         assertTrue(backup.contains("\"itemType\": \"TODO\""))
         assertTrue(backup.contains("\"creationKey\": \"session-7:item-2\""))
-        assertEquals(event, restored)
+        assertEquals(event.copy(
+            notificationStatus = NotificationStatus.PENDING,
+            syncStatus = SyncStatus.LOCAL_ONLY,
+            externalCalendarEventId = null,
+        ), restored)
+        assertFalse(backup.contains("external-7"))
     }
 
     @Test

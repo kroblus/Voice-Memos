@@ -166,15 +166,15 @@
     <string name="settings_default_duration">默认时长</string>
     <string name="settings_default_reminder">提前提醒</string>
     <string name="settings_minutes">分钟</string>
-    <string name="settings_default_calendar">默认日历：应用内本地日历</string>
+    <string name="settings_default_calendar">主数据：声历本地数据库；提醒可托管给本机系统日历</string>
     <string name="settings_default_timezone">默认时区：自动 · %1$s</string>
     <string name="settings_permission_microphone">麦克风</string>
     <string name="settings_permission_notifications">通知</string>
     <string name="settings_permission_exact_alarm">准点提醒</string>
     <string name="settings_action_notification_settings">通知设置</string>
     <string name="settings_action_reminder_settings">提醒设置</string>
-    <string name="settings_calendar_write">日历写入</string>
-    <string name="settings_calendar_write_description">应用内本地日历，无需系统日历权限</string>
+    <string name="settings_calendar_write">系统日历提醒</string>
+    <string name="settings_calendar_write_description">单向镜像到本机专属“声历”日历；不会同步到云端。关闭时会删除系统副本。</string>
     <string name="settings_available">可用</string>
     <string name="settings_action_refresh_status">刷新状态</string>
     <string name="settings_permission_ready">已开启</string>
@@ -189,7 +189,7 @@
     <string name="settings_privacy_title">隐私与数据说明</string>
     <string name="settings_privacy_description">查看数据保存位置和联网范围</string>
     <string name="settings_reset_title">清空本地数据？</string>
-    <string name="settings_reset_description">会删除日程、设置、解析历史和本机 API key。备份文件不会受影响。</string>
+    <string name="settings_reset_description">会删除日程、系统日历副本、设置、解析历史和本机 API key。若日历权限已撤销，需要先恢复权限才能清理系统副本。备份文件不会受影响。</string>
     <string name="settings_reset_confirm">确认清空</string>
     <string name="settings_reset_action">清空本地数据</string>
 </resources>

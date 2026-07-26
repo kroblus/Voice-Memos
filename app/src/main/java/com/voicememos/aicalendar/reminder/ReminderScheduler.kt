@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import com.voicememos.aicalendar.domain.CalendarEvent
 import com.voicememos.aicalendar.domain.NotificationStatus
@@ -64,10 +66,16 @@ internal fun determineScheduleResult(
     return if (canScheduleExact) ScheduleResult.EXACT else ScheduleResult.INEXACT
 }
 
+interface ReminderAlarmGateway {
+    fun scheduleWithResults(event: CalendarEvent): Map<Int, ScheduleResult>
+
+    fun cancel(eventId: String, reminderMinutes: List<Int>)
+}
+
 class ReminderScheduler(
     context: Context,
     private val clock: Clock = Clock.systemUTC(),
-) {
+) : ReminderAlarmGateway {
     private val appContext = context.applicationContext
     private val alarmManager = appContext.getSystemService(AlarmManager::class.java)
 
@@ -75,7 +83,7 @@ class ReminderScheduler(
         scheduleWithResults(event)
     }
 
-    fun scheduleWithResults(event: CalendarEvent): Map<Int, ScheduleResult> {
+    override fun scheduleWithResults(event: CalendarEvent): Map<Int, ScheduleResult> {
         val reminderMinutes = event.reminderMinutes.distinct()
         if (reminderMinutes.isEmpty()) return emptyMap()
         val anchor = event.reminderAnchor()
@@ -91,7 +99,7 @@ class ReminderScheduler(
         }
     }
 
-    fun cancel(eventId: String, reminderMinutes: List<Int>) {
+    override fun cancel(eventId: String, reminderMinutes: List<Int>) {
         reminderMinutes.forEach { minutesBefore ->
             alarmManager.cancel(pendingIntent(eventId, minutesBefore, ""))
         }
@@ -153,7 +161,7 @@ class ReminderScheduler(
     }
 
     companion object {
-        const val CHANNEL_ID = "shengli_reminders"
+        const val CHANNEL_ID = "shengli_local_fallback_v2"
         private const val INEXACT_WINDOW_MILLIS = 10 * 60 * 1000L
 
         fun ensureNotificationChannel(context: Context) {
@@ -163,7 +171,17 @@ class ReminderScheduler(
                 "日程提醒",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "声历的本地日程提醒"
+                description = "系统日历不可用时，由声历直接发送的备用提醒"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 240, 120, 240)
+                setBypassDnd(false)
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
             }
             manager.createNotificationChannel(channel)
         }
